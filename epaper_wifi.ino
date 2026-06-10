@@ -616,18 +616,37 @@ static const char* weekdayShort(int wday) {
   return names[wday];
 }
 
+static UWORD statusBarTextWidth(const char *text) {
+  return (UWORD)strlen(text) * 8;
+}
+
+static void buildStatusDateTimeLine(const struct tm *timeinfo, char *out, size_t outLen) {
+  snprintf(out, outLen, "%s %d/%d %02d:%02d",
+           weekdayShort(timeinfo->tm_wday),
+           timeinfo->tm_mon + 1,
+           timeinfo->tm_mday,
+           timeinfo->tm_hour,
+           timeinfo->tm_min);
+}
+
+static bool statusBarWeatherFits(UWORD dateTimeWidth, UWORD tempWidth, UWORD rightBoundX,
+                                 UWORD *weatherIconX, UWORD *weatherTempX) {
+  const UWORD gap = 2;
+  *weatherIconX = 18 + dateTimeWidth + gap;
+  *weatherTempX = *weatherIconX + 16 + gap;
+  return (*weatherTempX + tempWidth + gap) <= rightBoundX;
+}
+
 static void drawStatusBarRegion(UBYTE *image, int batteryPercent, bool wifiConnected,
                                 bool showWeather, WeatherIconKind weatherIcon, int weatherTempC) {
   (void)image;
   const UWORD barY = 2;
   const UWORD barLineY = 19;
   const UWORD dateX = 18;
-  const UWORD timeX = 76;
-  const UWORD weatherIconX = 118;
+  UWORD weatherIconX = 118;
   const UWORD weatherIconY = barY + 2;
-  const UWORD weatherTempX = 134;
-  const UWORD battIconX = 159;
-  const UWORD battTextX = 173;
+  UWORD weatherTempX = 134;
+  const UWORD battIconX = EPD_1IN54_V2_WIDTH - 15;
 
   drawWifiIcon(image, 2, barY + 4, wifiConnected);
 
@@ -638,38 +657,32 @@ static void drawStatusBarRegion(UBYTE *image, int batteryPercent, bool wifiConne
     return;
   }
 
-  char leftLine[32];
-  snprintf(leftLine, sizeof(leftLine), "%s %d/%d",
-           weekdayShort(timeinfo.tm_wday),
-           timeinfo.tm_mon + 1,
-           timeinfo.tm_mday);
-
-  char timeLine[16];
-  snprintf(timeLine, sizeof(timeLine), "%02d:%02d",
-           timeinfo.tm_hour, timeinfo.tm_min);
-
-  drawText(image, leftLine, dateX, barY);
-  drawText(image, timeLine, timeX, barY);
+  char dateTimeLine[32];
+  char tempLine[8] = {};
 
   if (showWeather) {
-    drawWeatherIcon(image, weatherIconX, weatherIconY, weatherIcon);
-    char tempLine[8];
     if (weatherTempC >= -9 && weatherTempC <= 99) {
       snprintf(tempLine, sizeof(tempLine), "%2dC", weatherTempC);
     } else {
       snprintf(tempLine, sizeof(tempLine), "--C");
     }
+  }
+
+  buildStatusDateTimeLine(&timeinfo, dateTimeLine, sizeof(dateTimeLine));
+  if (showWeather) {
+    (void)statusBarWeatherFits(statusBarTextWidth(dateTimeLine), statusBarTextWidth(tempLine),
+                               battIconX, &weatherIconX, &weatherTempX);
+  }
+
+  drawText(image, dateTimeLine, dateX, barY);
+
+  if (showWeather) {
+    drawWeatherIcon(image, weatherIconX, weatherIconY, weatherIcon);
     drawText(image, tempLine, weatherTempX, barY);
   }
 
-  if (batteryPercent < 0) {
-    drawBatteryIcon(image, battIconX, barY + 2, 100);
-  } else {
-    char battText[8];
-    snprintf(battText, sizeof(battText), "%d%%", batteryPercent);
-    drawBatteryIcon(image, battIconX, barY + 2, batteryPercent);
-    drawText(image, battText, battTextX, barY);
-  }
+  const int battLevel = (batteryPercent < 0) ? 100 : batteryPercent;
+  drawBatteryIcon(image, battIconX, barY + 2, battLevel);
 
   drawHorizontalLine(image, barLineY);
 }
