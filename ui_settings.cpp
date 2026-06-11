@@ -4,11 +4,12 @@
 #include "app_locale.h"
 #include "settings_api.h"
 #include "ui_fonts.h"
+#include "weather_service.h"
 
 #include <stdio.h>
 #include <string.h>
 
-#define SETTINGS_MAX_ROWS  5
+#define SETTINGS_MAX_ROWS  7
 #define SETTINGS_ROW_Y0    34
 #define SETTINGS_ROW_STEP  20
 
@@ -56,7 +57,7 @@ static int page_row_count(SettingsPage page) {
     case SETTINGS_PAGE_ROOT:
       return 4;
     case SETTINGS_PAGE_WIFI:
-      return 4;
+      return 7;
     case SETTINGS_PAGE_MODEL:
       return 5;
     case SETTINGS_PAGE_MODEL_PROVIDER:
@@ -99,7 +100,7 @@ static const char *language_value_label(void) {
 
 static bool page_row_is_action(SettingsPage page, int row) {
   if (page == SETTINGS_PAGE_WIFI) {
-    return row == 2 || row == 3;
+    return row >= 3 && row <= 6;
   }
   if (page == SETTINGS_PAGE_MODEL) {
     return row == 3 || row == 4;
@@ -159,9 +160,20 @@ static void build_row_text(SettingsPage page, int row, char *out, size_t outLen)
           snprintf(out, outLen, "IP: %s", ipLine);
           break;
         case 2:
-          snprintf(out, outLen, "%s", app_tr(TR_RECONFIGURE_WIFI));
+          snprintf(out, outLen, "%s",
+                   settings_api_has_weather_api() ? app_tr(TR_WEATHER_API_OK)
+                                                  : app_tr(TR_WEATHER_API_MISSING));
           break;
         case 3:
+          snprintf(out, outLen, "%s", app_tr(TR_CONFIGURE_WEATHER_API));
+          break;
+        case 4:
+          snprintf(out, outLen, "%s", app_tr(TR_CLEAR_WEATHER_API));
+          break;
+        case 5:
+          snprintf(out, outLen, "%s", app_tr(TR_RECONFIGURE_WIFI));
+          break;
+        case 6:
           snprintf(out, outLen, "%s", app_tr(TR_FORGET_WIFI));
           break;
         default:
@@ -441,11 +453,23 @@ SettingsActivateResult ui_settings_activate(void) {
   }
 
   if (s_page == SETTINGS_PAGE_WIFI) {
-    if (s_focusRow == 2) {
+    if (s_focusRow == 3) {
       settings_api_request_portal_restart();
       return SETTINGS_ACT_RESTART;
     }
-    if (s_focusRow == 3) {
+    if (s_focusRow == 4) {
+      if (settings_api_has_weather_api()) {
+        settings_api_clear_weather_api();
+        weather_service_reset();
+        update_menu_view();
+      }
+      return SETTINGS_ACT_NONE;
+    }
+    if (s_focusRow == 5) {
+      settings_api_request_portal_restart();
+      return SETTINGS_ACT_RESTART;
+    }
+    if (s_focusRow == 6) {
       settings_api_forget_wifi_and_restart();
       return SETTINGS_ACT_RESTART;
     }

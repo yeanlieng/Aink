@@ -31,4 +31,11 @@ void settings_api_forget_wifi_and_restart(void);
 
 bool settings_api_consume_force_portal_boot(void);
 
+bool settings_api_has_weather_api(void);
+void settings_api_set_weather_api_key(const char *apiKey);
+void settings_api_set_weather_api_host(const char *apiHost);
+void settings_api_clear_weather_api(void);
+void settings_api_get_weather_api_key(char *out, size_t outLen);
+void settings_api_get_weather_api_host(char *out, size_t outLen);
+
 #endif

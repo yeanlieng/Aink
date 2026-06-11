@@ -40,6 +40,7 @@ void weather_service_update(bool force);
 void weather_service_get_snapshot(WeatherSnapshot *out);
 
 WeatherIconKind weather_service_wmo_to_icon(int wmo);
+WeatherIconKind weather_service_qweather_icon_to_icon(int iconCode);
 const char *weather_service_wmo_to_label(int wmo);
 const char *weather_service_uv_level(int uvIndexTenths);
 const char *weather_service_aqi_level(int usAqi);

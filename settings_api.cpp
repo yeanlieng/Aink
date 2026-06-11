@@ -16,8 +16,11 @@
 #define PREFS_KEY_LANGUAGE     "lang"
 #define PREFS_KEY_AI_PROVIDER  "ai_provider"
 #define PREFS_KEY_AI_MODEL_IDX "ai_model"
-#define PREFS_KEY_AI_API_KEY   "ai_api_key"
-#define PREFS_API_KEY_MAX      128
+#define PREFS_KEY_AI_API_KEY        "ai_api_key"
+#define PREFS_KEY_WEATHER_API_KEY   "wx_api_key"
+#define PREFS_KEY_WEATHER_API_HOST  "wx_api_host"
+#define PREFS_API_KEY_MAX           128
+#define PREFS_WEATHER_HOST_MAX      64
 
 static void clamp_model_index_for_provider(AiProvider provider, int *modelIndex) {
   const int count = ai_provider_model_count(provider);
@@ -201,6 +204,94 @@ void settings_api_forget_wifi_and_restart(void) {
   prefs.end();
   delay(200);
   ESP.restart();
+}
+
+static void normalize_weather_host(char *host, size_t hostLen) {
+  if (host == nullptr || hostLen == 0 || host[0] == '\0') {
+    return;
+  }
+
+  size_t len = strlen(host);
+  if (len >= 8 && strncmp(host, "https://", 8) == 0) {
+    memmove(host, host + 8, len - 7);
+    len -= 8;
+  } else if (len >= 7 && strncmp(host, "http://", 7) == 0) {
+    memmove(host, host + 7, len - 6);
+    len -= 7;
+  }
+
+  if (len > 0 && host[len - 1] == '/') {
+    host[len - 1] = '\0';
+  }
+}
+
+bool settings_api_has_weather_api(void) {
+  char key[PREFS_API_KEY_MAX] = {};
+  char host[PREFS_WEATHER_HOST_MAX] = {};
+  settings_api_get_weather_api_key(key, sizeof(key));
+  settings_api_get_weather_api_host(host, sizeof(host));
+  return key[0] != '\0' && host[0] != '\0';
+}
+
+void settings_api_set_weather_api_key(const char *apiKey) {
+  if (apiKey == nullptr) {
+    return;
+  }
+
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.putString(PREFS_KEY_WEATHER_API_KEY, apiKey);
+  prefs.end();
+  Serial.println("[Settings] weather API key saved");
+}
+
+void settings_api_set_weather_api_host(const char *apiHost) {
+  if (apiHost == nullptr) {
+    return;
+  }
+
+  char host[PREFS_WEATHER_HOST_MAX] = {};
+  snprintf(host, sizeof(host), "%s", apiHost);
+  normalize_weather_host(host, sizeof(host));
+
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.putString(PREFS_KEY_WEATHER_API_HOST, host);
+  prefs.end();
+  Serial.printf("[Settings] weather API host saved: %s\n", host);
+}
+
+void settings_api_clear_weather_api(void) {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.remove(PREFS_KEY_WEATHER_API_KEY);
+  prefs.remove(PREFS_KEY_WEATHER_API_HOST);
+  prefs.end();
+  Serial.println("[Settings] weather API cleared");
+}
+
+void settings_api_get_weather_api_key(char *out, size_t outLen) {
+  if (out == nullptr || outLen == 0) {
+    return;
+  }
+
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, true);
+  const String key = prefs.getString(PREFS_KEY_WEATHER_API_KEY, "");
+  prefs.end();
+  snprintf(out, outLen, "%s", key.c_str());
+}
+
+void settings_api_get_weather_api_host(char *out, size_t outLen) {
+  if (out == nullptr || outLen == 0) {
+    return;
+  }
+
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, true);
+  const String host = prefs.getString(PREFS_KEY_WEATHER_API_HOST, "");
+  prefs.end();
+  snprintf(out, outLen, "%s", host.c_str());
 }
 
 bool settings_api_consume_force_portal_boot(void) {

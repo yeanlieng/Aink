@@ -43,7 +43,7 @@ Boot log should show `[Camera] ready (240x240 JPEG)` and non-zero `freePsram`.
 | Weather | Forecast, metrics, AQI, 3-day outlook |
 | **AI Vision** | Camera capture + cloud poetic description (≤40 Chinese chars) |
 | App 3 | Placeholder |
-| Settings | WiFi, **AI provider/model/API key**, Display, About; EN/ZH |
+| Settings | WiFi, **QWeather key/host**, AI provider/model/API key, Display, About; EN/ZH |
 
 ### AI Vision
 
@@ -63,6 +63,13 @@ Boot log should show `[Camera] ready (240x240 JPEG)` and non-zero `freePsram`.
 - **API key**: stored in NVS on device only (portal can save key + auto-restart)
 
 Configure API key via captive portal or Settings. MiMo keys often start with `tp-`; Kimi Platform uses keys from [platform.kimi.ai](https://platform.kimi.ai).
+
+### Weather (QWeather / 和风)
+
+- Register at [console.qweather.com](https://console.qweather.com) — copy **API Key** and **API Host** (e.g. `xxx.re.qweatherapi.com`, no `https://` prefix).
+- Configure via captive portal (**天气 API** card) or **Settings → WiFi → Configure Weather**.
+- Without Key + Host, weather tile shows no data; serial logs `[Weather] QWeather key/host not configured`.
+- Refreshes every 30 minutes when WiFi is connected.
 
 ### i18n
 
@@ -142,8 +149,8 @@ vision_service.*      Camera → HTTPS vision API → normalized text
 camera_service.*      XIAO Sense camera (240×240 JPEG)
 ai_model_config.*     Provider/model presets and URLs
 app_locale.*          EN/ZH strings
-settings_api.*        NVS (WiFi, language, AI key, provider, model)
-weather_service.*     Open-Meteo + air quality + geo
+settings_api.*        NVS (WiFi, language, AI key, QWeather key/host)
+weather_service.*     QWeather (和风) forecast + AQI + geo
 aink_3500_12/14.c     LVGL CJK fonts (~3500 chars)
 tools/                Font/icons/API test scripts
 ```
@@ -155,6 +162,8 @@ tools/                Font/icons/API test scripts
 | All Chinese shows □ | LVGL **8.3.x**; remove `.static_bitmap` from font `.c` if present |
 | `[Camera] init failed` / `frame buffer malloc failed` | **PSRAM Enabled**; partition ≥ 3MB; Sense board with camera |
 | `[Vision] HTTP -1` | PSRAM + WiFi; test with `tools/test_vision_api.py` on PC |
+| `[Weather] QWeather key/host not configured` | Settings → WiFi → Configure Weather, or portal **天气 API** card |
+| `[Weather] now HTTP -1` | Check API Host (no `https://` prefix) and Key at [console.qweather.com](https://console.qweather.com) |
 | `provider unsupported` | MiMo unsupported model → use **v2.5** / **v2-omni** |
 | Screen stuck on「分析中」 | Reflash latest firmware (NAV refresh after capture) |
 | `cam_hal: FB-OVF` | Harmless warning if capture works; camera pauses during HTTPS in latest code |
@@ -163,7 +172,7 @@ tools/                Font/icons/API test scripts
 
 - Do not break status-bar orientation or portal-only horizontal mirror (`epaper_canvas.cpp`).
 - E-paper is 1-bit: LVGL grays are thresholded in flush; avoid large gray fills.
-- Open-Meteo / ip-api are used without API keys; city names may need extra font glyphs for Chinese locales.
+- Weather uses **QWeather (和风)** — register at [console.qweather.com](https://console.qweather.com), copy **API Key** and **API Host**. Configure via captive portal or **Settings → WiFi → Configure Weather**. IP geolocation still uses `ip-api.com` (HTTP); forecast/AQI use your QWeather Host (HTTPS, domestic CDN).
 - Do not commit API keys or local test images.
 
 ## License

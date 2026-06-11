@@ -308,6 +308,19 @@ static const char PORTAL_HTML[] PROGMEM = R"rawliteral(
     </form>
     <p class="hint">Provider 与 Model 在设备 Settings → Model 中选择。Kimi Platform 请使用 platform.kimi.ai 的 Key；MiMo Token Plan 请使用 tp- 开头的订阅 Key。Key 仅存于本机 NVS，不会上传到其他服务器。</p>
   </div>
+  <div class="card">
+    <h2>天气 API（和风）</h2>
+    <form action="/save_weather" method="POST">
+      <label for="weather_host">API Host</label>
+      <input id="weather_host" name="weather_host" maxlength="64" required autocomplete="off"
+             placeholder="xxx.re.qweatherapi.com">
+      <label for="weather_api_key">API Key</label>
+      <input id="weather_api_key" name="weather_api_key" type="password" maxlength="128" required autocomplete="off"
+             placeholder="QWeather Key">
+      <button type="submit">保存天气 API</button>
+    </form>
+    <p class="hint">Host 与 Key 在 <a href="https://console.qweather.com">console.qweather.com</a> 控制台获取。仅存于本机 NVS。也可在 Settings → WiFi 中配置。</p>
+  </div>
 </body>
 </html>
 )rawliteral";
@@ -409,6 +422,48 @@ static void handlePortalSaveAi() {
                     "<a href='/'>返回</a></body></html>");
 }
 
+static void handlePortalSaveWeather() {
+  if (!portalServer.hasArg("weather_host") || !portalServer.hasArg("weather_api_key")) {
+    portalServer.send(400, "text/html; charset=utf-8",
+                      "<meta charset=utf-8><p>Host 与 Key 不能为空</p><a href='/'>返回</a>");
+    return;
+  }
+
+  String apiHost = portalServer.arg("weather_host");
+  String apiKey = portalServer.arg("weather_api_key");
+  apiHost.trim();
+  apiKey.trim();
+  if (apiHost.length() == 0 || apiKey.length() == 0) {
+    portalServer.send(400, "text/html; charset=utf-8",
+                      "<meta charset=utf-8><p>Host 与 Key 不能为空</p><a href='/'>返回</a>");
+    return;
+  }
+
+  settings_api_set_weather_api_host(apiHost.c_str());
+  settings_api_set_weather_api_key(apiKey.c_str());
+  weather_service_reset();
+
+  String storedSsid;
+  String storedPass;
+  if (loadStoredWiFiCredentials(storedSsid, storedPass)) {
+    portalServer.send(200, "text/html; charset=utf-8",
+                      "<!DOCTYPE html><html><head><meta charset=utf-8>"
+                      "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                      "</head><body><h2>天气 API 已保存</h2>"
+                      "<p>设备即将重启并拉取天气...</p></body></html>");
+    delay(1500);
+    ESP.restart();
+    return;
+  }
+
+  portalServer.send(200, "text/html; charset=utf-8",
+                    "<!DOCTYPE html><html><head><meta charset=utf-8>"
+                    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                    "</head><body><h2>天气 API 已保存</h2>"
+                    "<p>请先配置 WiFi，保存后设备会自动重启。</p>"
+                    "<a href='/'>返回</a></body></html>");
+}
+
 static void setupPortalWebRoutes() {
   if (portalWebStarted) {
     return;
@@ -417,6 +472,7 @@ static void setupPortalWebRoutes() {
   portalServer.on("/", HTTP_GET, handlePortalRoot);
   portalServer.on("/save", HTTP_POST, handlePortalSave);
   portalServer.on("/save_ai", HTTP_POST, handlePortalSaveAi);
+  portalServer.on("/save_weather", HTTP_POST, handlePortalSaveWeather);
   portalServer.on("/generate_204", HTTP_GET, handlePortalRoot);
   portalServer.on("/hotspot-detect.html", HTTP_GET, handlePortalRoot);
   portalServer.on("/fwlink", HTTP_GET, handlePortalRoot);
