@@ -9,6 +9,15 @@ static UBYTE s_blackImage[5000];
 static bool s_epaperPartialReady = false;
 static bool s_portalMirror = false;
 
+enum EpaperUploadState {
+  EPAPER_UPLOAD_IDLE = 0,
+  EPAPER_UPLOAD_FULL_WAIT,
+  EPAPER_UPLOAD_PARTIAL_WAIT,
+};
+
+static EpaperUploadState s_uploadState = EPAPER_UPLOAD_IDLE;
+static bool s_uploadMirrored = false;
+
 static const UWORD kRowBytes = (EPD_1IN54_V2_WIDTH + 7) / 8;
 
 static void mapToBuffer(UWORD lx, UWORD ly, UWORD *px, UWORD *py) {
@@ -88,18 +97,59 @@ void epaper_upload(bool fullRefresh) {
 }
 
 void epaper_upload_mode(bool fullInit, bool fastPartial) {
+  if (!epaper_upload_mode_async(fullInit, fastPartial)) {
+    return;
+  }
+  while (!epaper_poll_upload()) {
+    delay(1);
+  }
+}
+
+bool epaper_upload_mode_async(bool fullInit, bool fastPartial) {
+  if (s_uploadState != EPAPER_UPLOAD_IDLE) {
+    return false;
+  }
+
   if (fullInit || !s_epaperPartialReady) {
     Serial.println("[EPD] upload full init...");
     EPD_1IN54_V2_Init();
-    EPD_1IN54_V2_DisplayPartBaseImage(s_blackImage);
-    EPD_1IN54_V2_Init_Partial();
-    s_epaperPartialReady = true;
-    return;
+    EPD_1IN54_V2_DisplayPartBaseImageAsync(s_blackImage);
+    s_uploadState = EPAPER_UPLOAD_FULL_WAIT;
+    return true;
   }
 
   (void)fastPartial;
   mirrorLogicalXInPlace();
-  EPD_1IN54_V2_DisplayPart(s_blackImage);
-  EPD_1IN54_V2_LoadPartOldImage(s_blackImage);
-  mirrorLogicalXInPlace();
+  s_uploadMirrored = true;
+  EPD_1IN54_V2_DisplayPartAsync(s_blackImage);
+  s_uploadState = EPAPER_UPLOAD_PARTIAL_WAIT;
+  return true;
+}
+
+bool epaper_poll_upload(void) {
+  if (s_uploadState == EPAPER_UPLOAD_IDLE) {
+    return true;
+  }
+
+  if (EPD_1IN54_V2_PollBusyWait()) {
+    return false;
+  }
+
+  if (s_uploadState == EPAPER_UPLOAD_FULL_WAIT) {
+    EPD_1IN54_V2_Init_Partial();
+    s_epaperPartialReady = true;
+  } else if (s_uploadState == EPAPER_UPLOAD_PARTIAL_WAIT) {
+    EPD_1IN54_V2_LoadPartOldImage(s_blackImage);
+    if (s_uploadMirrored) {
+      mirrorLogicalXInPlace();
+      s_uploadMirrored = false;
+    }
+  }
+
+  s_uploadState = EPAPER_UPLOAD_IDLE;
+  return true;
+}
+
+bool epaper_upload_active(void) {
+  return s_uploadState != EPAPER_UPLOAD_IDLE;
 }

@@ -7,8 +7,13 @@
 
 #define EPD_BUSY_TIMING_DEBUG 1
 #define EPD_BUSY_TIMEOUT_MS   35000
+#define EPD_BUSY_BLOCK_DELAY_MS 10
 
 static uint32_t epd_busy_read_count = 0;
+static bool epd_busy_wait_active = false;
+static const char *epd_busy_wait_label = "busy";
+static uint32_t epd_busy_wait_start = 0;
+static uint32_t epd_busy_wait_elapsed = 0;
 
 unsigned char WF_Full_1IN54[159] =
 {
@@ -90,52 +95,100 @@ static void EPD_1IN54_V2_SendDataBuffer(UBYTE *Data, UDOUBLE Len)
     DEV_Digital_Write(EPD_CS_PIN, 1);
 }
 
-static uint32_t EPD_1IN54_V2_ReadBusy(const char *label)
+bool EPD_1IN54_V2_IsBusy(void)
 {
-    uint32_t start = millis();
-    uint32_t samples = 0;
-    int startLevel = DEV_Digital_Read(EPD_BUSY_PIN);
+    return DEV_Digital_Read(EPD_BUSY_PIN) == 1;
+}
+
+void EPD_1IN54_V2_BeginBusyWait(const char *label)
+{
+    epd_busy_wait_label = label ? label : "busy";
+    epd_busy_wait_start = millis();
+    epd_busy_wait_elapsed = 0;
+    epd_busy_wait_active = true;
 
 #if EPD_BUSY_TIMING_DEBUG
-    Serial.printf("[EPD] BUSY wait: %s (start=%d)...\r\n", label, startLevel);
+    Serial.printf("[EPD] BUSY wait: %s (start=%d)...\r\n",
+        epd_busy_wait_label, DEV_Digital_Read(EPD_BUSY_PIN));
 #endif
+}
 
-    while (DEV_Digital_Read(EPD_BUSY_PIN) == 1) {
-        samples++;
-        if (millis() - start >= EPD_BUSY_TIMEOUT_MS) {
-#if EPD_BUSY_TIMING_DEBUG
-            Serial.printf("[EPD] BUSY TIMEOUT %-20s stuck HIGH after %lums\r\n",
-                label, (unsigned long)(millis() - start));
-#endif
-            return millis() - start;
-        }
-        DEV_Delay_ms(1);
+bool EPD_1IN54_V2_PollBusyWait(void)
+{
+    if (!epd_busy_wait_active) {
+        return false;
     }
 
-    uint32_t elapsed = millis() - start;
+    if (EPD_1IN54_V2_IsBusy()) {
+        epd_busy_wait_elapsed = millis() - epd_busy_wait_start;
+        if (epd_busy_wait_elapsed >= EPD_BUSY_TIMEOUT_MS) {
+#if EPD_BUSY_TIMING_DEBUG
+            Serial.printf("[EPD] BUSY TIMEOUT %-20s stuck HIGH after %lums\r\n",
+                epd_busy_wait_label, (unsigned long)epd_busy_wait_elapsed);
+#endif
+            epd_busy_wait_active = false;
+            return false;
+        }
+        return true;
+    }
+
+    epd_busy_wait_elapsed = millis() - epd_busy_wait_start;
+    epd_busy_wait_active = false;
 
 #if EPD_BUSY_TIMING_DEBUG
     Serial.printf("[EPD] BUSY done  #%-3lu %-20s %lums\r\n",
-        ++epd_busy_read_count, label, (unsigned long)elapsed);
+        ++epd_busy_read_count, epd_busy_wait_label, (unsigned long)epd_busy_wait_elapsed);
 #endif
 
-    return elapsed;
+    return false;
 }
 
-static void EPD_1IN54_V2_TurnOnDisplay(void)
+bool EPD_1IN54_V2_BusyWaitActive(void)
+{
+    return epd_busy_wait_active;
+}
+
+static uint32_t EPD_1IN54_V2_WaitBusyWithDelay(uint32_t delayMs)
+{
+    while (EPD_1IN54_V2_PollBusyWait()) {
+        DEV_Delay_ms(delayMs);
+    }
+
+    return epd_busy_wait_elapsed;
+}
+
+static uint32_t EPD_1IN54_V2_ReadBusy(const char *label)
+{
+    EPD_1IN54_V2_BeginBusyWait(label);
+    return EPD_1IN54_V2_WaitBusyWithDelay(1);
+}
+
+static void EPD_1IN54_V2_TurnOnDisplayBegin(void)
 {
     EPD_1IN54_V2_SendCommand(0x22);
     EPD_1IN54_V2_SendData(0xc7);
     EPD_1IN54_V2_SendCommand(0x20);
-    EPD_1IN54_V2_ReadBusy("display-full");
+    EPD_1IN54_V2_BeginBusyWait("display-full");
 }
 
-static void EPD_1IN54_V2_TurnOnDisplayPart(void)
+static void EPD_1IN54_V2_TurnOnDisplay(void)
+{
+    EPD_1IN54_V2_TurnOnDisplayBegin();
+    EPD_1IN54_V2_WaitBusyWithDelay(EPD_BUSY_BLOCK_DELAY_MS);
+}
+
+static void EPD_1IN54_V2_TurnOnDisplayPartBegin(void)
 {
     EPD_1IN54_V2_SendCommand(0x22);
     EPD_1IN54_V2_SendData(0xcF);
     EPD_1IN54_V2_SendCommand(0x20);
-    EPD_1IN54_V2_ReadBusy("display-partial");
+    EPD_1IN54_V2_BeginBusyWait("display-partial");
+}
+
+static void EPD_1IN54_V2_TurnOnDisplayPart(void)
+{
+    EPD_1IN54_V2_TurnOnDisplayPartBegin();
+    EPD_1IN54_V2_WaitBusyWithDelay(EPD_BUSY_BLOCK_DELAY_MS);
 }
 
 static void EPD_1IN54_V2_Lut(UBYTE *lut)
@@ -273,6 +326,12 @@ void EPD_1IN54_V2_Enter_Partial(void)
 
 void EPD_1IN54_V2_Clear(void)
 {
+    EPD_1IN54_V2_ClearAsync();
+    EPD_1IN54_V2_WaitBusyWithDelay(EPD_BUSY_BLOCK_DELAY_MS);
+}
+
+void EPD_1IN54_V2_ClearAsync(void)
+{
     UWORD Width, Height;
     Width = (EPD_1IN54_V2_WIDTH % 8 == 0) ? (EPD_1IN54_V2_WIDTH / 8) : (EPD_1IN54_V2_WIDTH / 8 + 1);
     Height = EPD_1IN54_V2_HEIGHT;
@@ -298,12 +357,18 @@ void EPD_1IN54_V2_Clear(void)
     }
 
 #if EPD_BUSY_TIMING_DEBUG
-    Serial.println("[EPD] Clear: full refresh (~25s, wait BUSY)...");
+    Serial.println("[EPD] Clear: full refresh (~25s, async BUSY)...");
 #endif
-    EPD_1IN54_V2_TurnOnDisplay();
+    EPD_1IN54_V2_TurnOnDisplayBegin();
 }
 
 void EPD_1IN54_V2_Display(UBYTE *Image)
+{
+    EPD_1IN54_V2_DisplayAsync(Image);
+    EPD_1IN54_V2_WaitBusyWithDelay(EPD_BUSY_BLOCK_DELAY_MS);
+}
+
+void EPD_1IN54_V2_DisplayAsync(UBYTE *Image)
 {
     UWORD Width, Height;
     Width = (EPD_1IN54_V2_WIDTH % 8 == 0) ? (EPD_1IN54_V2_WIDTH / 8) : (EPD_1IN54_V2_WIDTH / 8 + 1);
@@ -312,10 +377,16 @@ void EPD_1IN54_V2_Display(UBYTE *Image)
     EPD_1IN54_V2_SetCursor(0, EPD_1IN54_V2_HEIGHT - 1);
     EPD_1IN54_V2_SendCommand(0x24);
     EPD_1IN54_V2_SendDataBuffer(Image, Width * Height);
-    EPD_1IN54_V2_TurnOnDisplay();
+    EPD_1IN54_V2_TurnOnDisplayBegin();
 }
 
 void EPD_1IN54_V2_DisplayPartBaseImage(UBYTE *Image)
+{
+    EPD_1IN54_V2_DisplayPartBaseImageAsync(Image);
+    EPD_1IN54_V2_WaitBusyWithDelay(EPD_BUSY_BLOCK_DELAY_MS);
+}
+
+void EPD_1IN54_V2_DisplayPartBaseImageAsync(UBYTE *Image)
 {
     UWORD Width, Height;
     Width = (EPD_1IN54_V2_WIDTH % 8 == 0) ? (EPD_1IN54_V2_WIDTH / 8) : (EPD_1IN54_V2_WIDTH / 8 + 1);
@@ -326,10 +397,16 @@ void EPD_1IN54_V2_DisplayPartBaseImage(UBYTE *Image)
     EPD_1IN54_V2_SendDataBuffer(Image, Width * Height);
     EPD_1IN54_V2_SendCommand(0x26);
     EPD_1IN54_V2_SendDataBuffer(Image, Width * Height);
-    EPD_1IN54_V2_TurnOnDisplay();
+    EPD_1IN54_V2_TurnOnDisplayBegin();
 }
 
 void EPD_1IN54_V2_DisplayPart(UBYTE *Image)
+{
+    EPD_1IN54_V2_DisplayPartAsync(Image);
+    EPD_1IN54_V2_WaitBusyWithDelay(EPD_BUSY_BLOCK_DELAY_MS);
+}
+
+void EPD_1IN54_V2_DisplayPartAsync(UBYTE *Image)
 {
     UWORD Width, Height;
     Width = (EPD_1IN54_V2_WIDTH % 8 == 0) ? (EPD_1IN54_V2_WIDTH / 8) : (EPD_1IN54_V2_WIDTH / 8 + 1);
@@ -338,7 +415,7 @@ void EPD_1IN54_V2_DisplayPart(UBYTE *Image)
     EPD_1IN54_V2_SetCursor(0, EPD_1IN54_V2_HEIGHT - 1);
     EPD_1IN54_V2_SendCommand(0x24);
     EPD_1IN54_V2_SendDataBuffer(Image, Width * Height);
-    EPD_1IN54_V2_TurnOnDisplayPart();
+    EPD_1IN54_V2_TurnOnDisplayPartBegin();
 }
 
 void EPD_1IN54_V2_LoadPartOldImage(UBYTE *Image)

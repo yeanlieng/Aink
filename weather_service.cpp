@@ -8,6 +8,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <time.h>
 
 #include <Arduino.h>
@@ -19,11 +21,18 @@
 #define WEATHER_HTTP_TIMEOUT_MS    60000
 #define WEATHER_HTTP_CONNECT_MS    30000
 #define WEATHER_HTTP_OPTIONAL_MS   20000
+#define WEATHER_TASK_POLL_MS       250
+#define WEATHER_TASK_STACK_BYTES   12288
 
 static WeatherSnapshot s_snapshot = {};
 static unsigned long s_lastFetchMs = 0;
 static unsigned long s_lastAttemptMs = 0;
 static bool s_freshFetchPending = false;
+static TaskHandle_t s_weatherTask = nullptr;
+static portMUX_TYPE s_weatherMux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool s_updateRequested = false;
+static volatile bool s_forceRequested = false;
+static volatile bool s_updateBusy = false;
 
 static int roundTemp(float tempC) {
   return (int)(tempC + (tempC >= 0.0f ? 0.5f : -0.5f));
@@ -165,6 +174,7 @@ const char *weather_service_aqi_level(int usAqi) {
 }
 
 void weather_service_reset(void) {
+  portENTER_CRITICAL(&s_weatherMux);
   memset(&s_snapshot, 0, sizeof(s_snapshot));
   s_snapshot.humidityPct = -1;
   s_snapshot.uvIndexTenths = -1;
@@ -175,13 +185,19 @@ void weather_service_reset(void) {
   s_lastFetchMs = 0;
   s_lastAttemptMs = 0;
   s_freshFetchPending = false;
+  s_updateRequested = false;
+  s_forceRequested = false;
+  portEXIT_CRITICAL(&s_weatherMux);
 }
 
 bool weather_service_consume_fresh_fetch(void) {
+  portENTER_CRITICAL(&s_weatherMux);
   if (!s_freshFetchPending) {
+    portEXIT_CRITICAL(&s_weatherMux);
     return false;
   }
   s_freshFetchPending = false;
+  portEXIT_CRITICAL(&s_weatherMux);
   return true;
 }
 
@@ -189,7 +205,9 @@ void weather_service_get_snapshot(WeatherSnapshot *out) {
   if (out == nullptr) {
     return;
   }
+  portENTER_CRITICAL(&s_weatherMux);
   *out = s_snapshot;
+  portEXIT_CRITICAL(&s_weatherMux);
 }
 
 static bool parseJsonQuotedStringAfter(const String &body, int sectionIdx, const char *fieldKey,
@@ -948,27 +966,96 @@ static bool fetchWeather(WeatherSnapshot *out) {
   }
 }
 
+static void weather_service_task(void *param) {
+  (void)param;
+  for (;;) {
+    bool shouldUpdate = false;
+    bool force = false;
+
+    portENTER_CRITICAL(&s_weatherMux);
+    if (s_updateRequested && !s_updateBusy) {
+      shouldUpdate = true;
+      force = s_forceRequested;
+      s_updateRequested = false;
+      s_forceRequested = false;
+      s_updateBusy = true;
+    }
+    portEXIT_CRITICAL(&s_weatherMux);
+
+    if (shouldUpdate) {
+      weather_service_update(force);
+      portENTER_CRITICAL(&s_weatherMux);
+      s_updateBusy = false;
+      portEXIT_CRITICAL(&s_weatherMux);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(WEATHER_TASK_POLL_MS));
+  }
+}
+
+static void weather_service_ensure_task(void) {
+  if (s_weatherTask != nullptr) {
+    return;
+  }
+
+  if (xTaskCreate(weather_service_task, "weather", WEATHER_TASK_STACK_BYTES,
+                  nullptr, 1, &s_weatherTask) != pdPASS) {
+    Serial.println("[Weather] task create failed");
+    s_weatherTask = nullptr;
+  }
+}
+
+void weather_service_request_update(bool force) {
+  weather_service_ensure_task();
+  portENTER_CRITICAL(&s_weatherMux);
+  s_updateRequested = true;
+  if (force) {
+    s_forceRequested = true;
+  }
+  portEXIT_CRITICAL(&s_weatherMux);
+}
+
+bool weather_service_is_busy(void) {
+  portENTER_CRITICAL(&s_weatherMux);
+  const bool busy = s_updateBusy || s_updateRequested;
+  portEXIT_CRITICAL(&s_weatherMux);
+  return busy;
+}
+
 void weather_service_update(bool force) {
   if (WiFi.status() != WL_CONNECTED) {
     return;
   }
 
   const unsigned long now = millis();
-  if (!force && s_snapshot.valid &&
-      (now - s_lastFetchMs) < WEATHER_FETCH_INTERVAL_MS) {
-    return;
+  bool snapshotValid = false;
+  unsigned long lastFetchMs = 0;
+  unsigned long lastAttemptMs = 0;
+
+  portENTER_CRITICAL(&s_weatherMux);
+  snapshotValid = s_snapshot.valid;
+  lastFetchMs = s_lastFetchMs;
+  lastAttemptMs = s_lastAttemptMs;
+  const bool skip =
+      (!force && snapshotValid && (now - lastFetchMs) < WEATHER_FETCH_INTERVAL_MS) ||
+      (!force && !snapshotValid && lastAttemptMs != 0 &&
+       (now - lastAttemptMs) < WEATHER_RETRY_INTERVAL_MS);
+  if (!skip) {
+    s_lastAttemptMs = now;
   }
-  if (!force && !s_snapshot.valid && s_lastAttemptMs != 0 &&
-      (now - s_lastAttemptMs) < WEATHER_RETRY_INTERVAL_MS) {
+  portEXIT_CRITICAL(&s_weatherMux);
+
+  if (skip) {
     return;
   }
 
-  s_lastAttemptMs = now;
   WeatherSnapshot fresh = {};
   if (fetchWeather(&fresh)) {
+    portENTER_CRITICAL(&s_weatherMux);
     s_snapshot = fresh;
     s_lastFetchMs = now;
     s_freshFetchPending = true;
+    portEXIT_CRITICAL(&s_weatherMux);
     Serial.println("[Weather] fetch complete");
   }
 }
