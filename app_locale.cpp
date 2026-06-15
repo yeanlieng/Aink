@@ -7,10 +7,12 @@
 #include "ui_stock.h"
 #include "ui_weather.h"
 #include "ui_vision.h"
+#include "ui_clock.h"
 
 static AppLanguage s_lang = APP_LANG_EN;
 
 static const char *kStringsEn[TR_COUNT] = {
+    "Clock",
     "Weather",
     "AI Vision",
     "Stocks",
@@ -54,6 +56,14 @@ static const char *kStringsEn[TR_COUNT] = {
     "Language",
     "English",
     "中文",
+    "Time format",
+    "24-hour",
+    "12-hour",
+    "Theme",
+    "Light Minimal",
+    "Show date",
+    "On",
+    "Off",
 
     "No data",
     "Check WiFi",
@@ -89,6 +99,7 @@ static const char *kStringsEn[TR_COUNT] = {
 };
 
 static const char *kStringsZh[TR_COUNT] = {
+    "时钟",
     "天气",
     "AI识图",
     "股票",
@@ -132,6 +143,14 @@ static const char *kStringsZh[TR_COUNT] = {
     "语言",
     "English",
     "中文",
+    "时间格式",
+    "24小时",
+    "12小时",
+    "主题",
+    "Light Minimal",
+    "显示日期",
+    "开",
+    "关",
 
     "暂无数据",
     "请检查网络",
@@ -211,4 +230,5 @@ void app_locale_refresh_all(void) {
   ui_weather_refresh();
   ui_stock_refresh();
   ui_vision_refresh();
+  ui_clock_refresh_locale();
 }

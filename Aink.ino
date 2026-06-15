@@ -16,6 +16,7 @@
 #include "ui_settings.h"
 #include "ui_nav.h"
 #include "ui_vision.h"
+#include "ui_clock.h"
 #include "ui_refresh.h"
 #include "settings_api.h"
 #include "app_locale.h"
@@ -906,6 +907,7 @@ static void startNormalOperation() {
   ui_weather_init();
   ui_stock_init();
   ui_vision_init();
+  ui_clock_init();
   ui_settings_init();
   ui_nav_init();
   ui_lvgl_prepare();
@@ -1116,9 +1118,12 @@ static void refreshMainUiOnDisplay(UiRefreshMode mode) {
       ui_weather_refresh();
     } else if (ui_nav_is_stock()) {
       ui_stock_refresh();
+    } else if (ui_nav_is_clock()) {
+      ui_clock_refresh();
     } else if (ui_nav_is_home()) {
       ui_home_refresh_weather();
       ui_home_refresh_stocks();
+      ui_home_refresh_clock();
     }
   }
 

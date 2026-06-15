@@ -27,6 +27,7 @@ struct _lv_font_t;
 typedef struct _lv_font_t lv_font_t;
 extern const lv_font_t aink_3500_12;
 extern const lv_font_t aink_3500_14;
+extern const lv_font_t aink_clock_40;
 
 #define LV_FONT_MONTSERRAT_12  0
 #define LV_FONT_MONTSERRAT_14  0

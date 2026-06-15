@@ -9,6 +9,7 @@ typedef enum {
 } AppLanguage;
 
 typedef enum {
+  TR_TILE_CLOCK,
   TR_TILE_WEATHER,
   TR_TILE_APP2,
   TR_TILE_APP3,
@@ -52,6 +53,14 @@ typedef enum {
   TR_LANGUAGE,
   TR_LANG_ENGLISH,
   TR_LANG_CHINESE,
+  TR_CLOCK_FORMAT,
+  TR_CLOCK_24H,
+  TR_CLOCK_12H,
+  TR_CLOCK_THEME,
+  TR_CLOCK_THEME_LIGHT,
+  TR_CLOCK_SHOW_DATE,
+  TR_ON,
+  TR_OFF,
 
   TR_NO_DATA,
   TR_CHECK_WIFI,

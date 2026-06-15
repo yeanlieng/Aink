@@ -6,6 +6,7 @@
 void ui_home_init(void);
 void ui_home_show(void);
 void ui_home_refresh_weather(void);
+void ui_home_refresh_clock(void);
 void ui_home_refresh_stocks(void);
 void ui_home_refresh_locale(void);
 void ui_home_next_focus(int *outPrevFocus);

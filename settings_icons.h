@@ -113,4 +113,40 @@ static const uint32_t stock_chart_bitmap[SETTINGS_ICON_SIZE] = {
   0x00000000u,
 };
 
+/** Analog clock outline (clock tile). Source: clock.svg */
+static const uint32_t clock_face_bitmap[SETTINGS_ICON_SIZE] = {
+  0x00000000u,
+  0x0007E000u,
+  0x003C3C00u,
+  0x00E7E700u,
+  0x03BC3DC0u,
+  0x06E00760u,
+  0x0D8001B0u,
+  0x0B0000D0u,
+  0x1E000078u,
+  0x14038028u,
+  0x3C02803Cu,
+  0x28028014u,
+  0x28028014u,
+  0x7802801Eu,
+  0x5002800Au,
+  0x5002800Au,
+  0x5002C00Au,
+  0x5003700Au,
+  0x7801981Eu,
+  0x2800EC14u,
+  0x28003C14u,
+  0x3C000C3Cu,
+  0x14000028u,
+  0x1E000078u,
+  0x0B0000D0u,
+  0x0D8001B0u,
+  0x06E00760u,
+  0x03BC3DC0u,
+  0x00E7E700u,
+  0x003C3C00u,
+  0x0007E000u,
+  0x00000000u,
+};
+
 #endif

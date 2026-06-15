@@ -44,4 +44,9 @@ void settings_api_clear_watchlist(void);
 bool settings_api_has_watchlist(void);
 int settings_api_watchlist_count(void);
 
+bool settings_api_clock_use_24h(void);
+void settings_api_set_clock_use_24h(bool use24h);
+bool settings_api_clock_show_date(void);
+void settings_api_set_clock_show_date(bool showDate);
+
 #endif
