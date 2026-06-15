@@ -6,6 +6,7 @@
 #include "ui_stock.h"
 #include "ui_vision.h"
 #include "ui_weather.h"
+#include "ui_clock.h"
 
 #include <Arduino.h>
 #include <stdio.h>
@@ -39,15 +40,21 @@ bool ui_nav_is_stock(void) {
   return !s_onHome && ui_stock_is_active();
 }
 
+bool ui_nav_is_clock(void) {
+  return !s_onHome && ui_clock_is_active();
+}
+
 static void open_focused_tile(void) {
   const int focus = ui_home_get_focus();
   if (focus == 0) {
-    ui_weather_show();
+    ui_clock_show();
   } else if (focus == 1) {
-    ui_vision_show();
+    ui_weather_show();
   } else if (focus == 2) {
-    ui_stock_show();
+    ui_vision_show();
   } else if (focus == 3) {
+    ui_stock_show();
+  } else if (focus == 4) {
     ui_settings_show();
   } else {
     ui_detail_show(ui_home_focus_title(), app_tr(TR_COMING_SOON));
@@ -153,6 +160,24 @@ bool ui_nav_handle(BtnAction action, UiRefreshMode *outRefreshMode) {
         return false;
       case BTN_ACTION_BACK:
         ui_vision_leave();
+        ui_home_show();
+        s_onHome = true;
+        if (outRefreshMode != nullptr) {
+          *outRefreshMode = UI_REFRESH_NAV;
+        }
+        return true;
+      case BTN_ACTION_VOICE_TOGGLE:
+        s_voiceListening = !s_voiceListening;
+        Serial.printf("[Voice] listening=%s (stub)\n", s_voiceListening ? "on" : "off");
+        return false;
+      default:
+        return false;
+    }
+  }
+
+  if (ui_clock_is_active()) {
+    switch (action) {
+      case BTN_ACTION_BACK:
         ui_home_show();
         s_onHome = true;
         if (outRefreshMode != nullptr) {

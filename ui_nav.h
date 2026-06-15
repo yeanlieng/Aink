@@ -11,5 +11,6 @@ bool ui_nav_is_weather(void);
 bool ui_nav_is_settings(void);
 bool ui_nav_is_vision(void);
 bool ui_nav_is_stock(void);
+bool ui_nav_is_clock(void);
 
 #endif

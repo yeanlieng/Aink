@@ -24,6 +24,8 @@
 #define PREFS_WEATHER_HOST_MAX      64
 #define PREFS_WATCHLIST_MAX         128
 #define PREFS_WATCHLIST_DEFAULT     "sh600519,AAPL"
+#define PREFS_KEY_CLOCK_24H         "clk_24h"
+#define PREFS_KEY_CLOCK_DATE        "clk_date"
 
 static void clamp_model_index_for_provider(AiProvider provider, int *modelIndex) {
   const int count = ai_provider_model_count(provider);
@@ -297,6 +299,7 @@ void settings_api_get_weather_api_host(char *out, size_t outLen) {
   snprintf(out, outLen, "%s", host.c_str());
 }
 
+
 void settings_api_get_watchlist(char *out, size_t outLen) {
   if (out == nullptr || outLen == 0) {
     return;
@@ -353,6 +356,36 @@ int settings_api_watchlist_count(void) {
     token = strtok_r(nullptr, ",", &savePtr);
   }
   return count;
+}
+
+bool settings_api_clock_use_24h(void) {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, true);
+  const bool use24h = prefs.getBool(PREFS_KEY_CLOCK_24H, true);
+  prefs.end();
+  return use24h;
+}
+
+void settings_api_set_clock_use_24h(bool use24h) {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.putBool(PREFS_KEY_CLOCK_24H, use24h);
+  prefs.end();
+}
+
+bool settings_api_clock_show_date(void) {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, true);
+  const bool showDate = prefs.getBool(PREFS_KEY_CLOCK_DATE, false);
+  prefs.end();
+  return showDate;
+}
+
+void settings_api_set_clock_show_date(bool showDate) {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.putBool(PREFS_KEY_CLOCK_DATE, showDate);
+  prefs.end();
 }
 
 bool settings_api_consume_force_portal_boot(void) {

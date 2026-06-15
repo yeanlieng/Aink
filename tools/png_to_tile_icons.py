@@ -31,6 +31,7 @@ ICON_FILES = [
     ("settings_gear_bitmap", "gear.png", "Gear outline (settings tile)."),
     ("vision_eye_bitmap", "eye.png", "Eye outline (AI vision tile)."),
     ("stock_chart_bitmap", "stock.svg", "Stock chart outline (stocks tile)."),
+    ("clock_face_bitmap", "clock.svg", "Analog clock outline (clock tile)."),
 ]
 
 

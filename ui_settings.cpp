@@ -3,6 +3,7 @@
 #include "ai_model_config.h"
 #include "app_locale.h"
 #include "settings_api.h"
+#include "ui_clock.h"
 #include "ui_fonts.h"
 #include "weather_service.h"
 #include "stock_service.h"
@@ -70,7 +71,7 @@ static int page_row_count(SettingsPage page) {
     case SETTINGS_PAGE_MODEL_PRESET:
       return ai_provider_model_count(settings_api_get_provider());
     case SETTINGS_PAGE_DISPLAY:
-      return 3;
+      return 6;
     case SETTINGS_PAGE_ABOUT:
       return 2;
     default:
@@ -115,7 +116,7 @@ static bool page_row_is_action(SettingsPage page, int row) {
   if (page == SETTINGS_PAGE_STOCKS) {
     return row >= 1;
   }
-  if (page == SETTINGS_PAGE_DISPLAY && row == 2) {
+  if (page == SETTINGS_PAGE_DISPLAY && (row == 2 || row == 3 || row == 5)) {
     return true;
   }
   return false;
@@ -263,6 +264,17 @@ static void build_row_text(SettingsPage page, int row, char *out, size_t outLen)
           break;
         case 2:
           snprintf(out, outLen, "%s %s", app_tr(TR_LANGUAGE), language_value_label());
+          break;
+        case 3:
+          snprintf(out, outLen, "%s: %s", app_tr(TR_CLOCK_FORMAT),
+                   settings_api_clock_use_24h() ? app_tr(TR_CLOCK_24H) : app_tr(TR_CLOCK_12H));
+          break;
+        case 4:
+          snprintf(out, outLen, "%s: %s", app_tr(TR_CLOCK_THEME), app_tr(TR_CLOCK_THEME_LIGHT));
+          break;
+        case 5:
+          snprintf(out, outLen, "%s: %s", app_tr(TR_CLOCK_SHOW_DATE),
+                   settings_api_clock_show_date() ? app_tr(TR_ON) : app_tr(TR_OFF));
           break;
         default:
           snprintf(out, outLen, "");
@@ -477,9 +489,23 @@ SettingsActivateResult ui_settings_activate(void) {
     return SETTINGS_ACT_NONE;
   }
 
-  if (s_page == SETTINGS_PAGE_DISPLAY && s_focusRow == 2) {
-    app_locale_toggle();
-    return SETTINGS_ACT_LOCALE;
+  if (s_page == SETTINGS_PAGE_DISPLAY) {
+    if (s_focusRow == 2) {
+      app_locale_toggle();
+      return SETTINGS_ACT_LOCALE;
+    }
+    if (s_focusRow == 3) {
+      settings_api_set_clock_use_24h(!settings_api_clock_use_24h());
+      ui_clock_on_settings_changed();
+      update_menu_view();
+      return SETTINGS_ACT_NONE;
+    }
+    if (s_focusRow == 5) {
+      settings_api_set_clock_show_date(!settings_api_clock_show_date());
+      ui_clock_on_settings_changed();
+      update_menu_view();
+      return SETTINGS_ACT_NONE;
+    }
   }
 
   if (!page_row_is_action(s_page, s_focusRow)) {
