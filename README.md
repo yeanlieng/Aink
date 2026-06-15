@@ -114,17 +114,22 @@ Providers: `mimo`, `kimi`, `openai`. See `tools/test_vision_api.py --help`.
 
 ### Chinese fonts
 
-Regenerate symbol list and fonts with [LVGL Font Converter](https://lvgl.io/tools/fontconverter) (**LVGL 8.x**):
+Regenerate symbol list and fonts:
 
 ```bash
 python tools/build_cn_symbols.py
+python tools/build_fonts.py
 ```
+
+`build_fonts.py` needs Node.js (`npx`) and writes `aink_3500_12.c` / `aink_3500_14.c` (Noto Sans SC is cached under `tools/fonts/`, gitignored).
+
+Manual option: [LVGL Font Converter](https://lvgl.io/tools/fontconverter) (**LVGL 8.x**):
 
 Converter settings:
 
 - Bpp: **1**, size **12** / **14**
 - Range: `0x20-0x7F`
-- Symbols: paste from `tools/cn_font_symbols.txt` (3500 common chars + UI strings)
+- Symbols: paste from `tools/cn_font_symbols.txt` (3500 common chars + UI strings + CJK punctuation)
 - Output: `aink_3500_12.c`, `aink_3500_14.c`
 - If the converter adds `.static_bitmap = 0` (LVGL 9), **remove that line** for LVGL 8.3
 
@@ -138,7 +143,7 @@ python tools/png_to_tile_icons.py
 ```
 
 - Weather icons: rasterize `wi-*.svg` → `weather_icons.h` (16×16).
-- Launcher icons: place **`gear.png`** and **`eye.png`** in the sketch root (local only; gitignored), run `png_to_tile_icons.py` → `settings_icons.h` (32×32 outline bitmaps for Settings and AI Vision tiles).
+- Launcher icons: **`stock.svg`** is committed; place **`gear.png`** and **`eye.png`** in the sketch root (local only; gitignored). Run `png_to_tile_icons.py` → `settings_icons.h` (32×32 outline bitmaps for all launcher tiles).
 
 ## Project layout
 
@@ -157,7 +162,7 @@ settings_api.*        NVS (WiFi, language, AI key, QWeather key/host)
 weather_service.*     QWeather fetch, parse, icon mapping
 weather_gzip.*          Gzip decompress wrapper (uses puff)
 puff.c / puff.h         Embedded deflate decompressor (public domain)
-settings_icons.h      Launcher gear + eye bitmaps (generated)
+settings_icons.h      Launcher gear, eye, and stock bitmaps (generated)
 aink_3500_12/14.c     LVGL CJK fonts (~3500 chars)
 tools/                Font/icons/API test scripts
 ```

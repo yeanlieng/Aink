@@ -38,4 +38,10 @@ void settings_api_clear_weather_api(void);
 void settings_api_get_weather_api_key(char *out, size_t outLen);
 void settings_api_get_weather_api_host(char *out, size_t outLen);
 
+void settings_api_get_watchlist(char *out, size_t outLen);
+void settings_api_set_watchlist(const char *watchlist);
+void settings_api_clear_watchlist(void);
+bool settings_api_has_watchlist(void);
+int settings_api_watchlist_count(void);
+
 #endif

@@ -85,12 +85,22 @@ UI_STRINGS = [
     "数",
 ]
 
+# Full-width / CJK punctuation (3500 字表不含标点，单独追加到 LVGL Symbols).
+CN_PUNCTUATION = (
+    "，。、；：？！"
+    "“”‘’"
+    "（）《》【】"
+    "—…·￥"
+    "「」『』"
+    "〈〉"
+)
+
 HEADER = """# Aink LVGL 中文字体 Symbols 字表
 # 用法：复制下面「SYMBOLS 一行」到 https://lvgl.io/tools/fontconverter
 # Range 另填：0x20-0x7F（保留英文、数字、标点）
 # Size：12 与 14 各生成一份；Bpp：1；Format：C array
 #
-# 字表组成：《现代汉语常用字表》3500 字 + UI 专有字
+# 字表组成：《现代汉语常用字表》3500 字 + UI 专有字 + 中文标点
 # 不含：动态城市名、WiFi SSID、Portal 网页文案
 # 重新生成：python tools/build_cn_symbols.py
 #
@@ -123,10 +133,22 @@ def collect_ui_han() -> str:
     return "".join(sorted(chars))
 
 
-def merge_symbols(common: str, ui_extra: str) -> str:
+def load_common_3500() -> str:
+    try:
+        return download_common_3500()
+    except OSError as exc:
+        if not COMMON_3500_PATH.is_file():
+            raise SystemExit(
+                f"Failed to download 3500 chars and no cache at {COMMON_3500_PATH}: {exc}"
+            ) from exc
+        print(f"Download failed ({exc}); using cached {COMMON_3500_PATH.name}")
+        return COMMON_3500_PATH.read_text(encoding="utf-8").strip()
+
+
+def merge_symbols(common: str, ui_extra: str, punctuation: str) -> str:
     out: list[str] = []
     seen: set[str] = set()
-    for block in (common, ui_extra):
+    for block in (common, ui_extra, punctuation):
         for ch in block:
             if ch not in seen:
                 seen.add(ch)
@@ -143,14 +165,14 @@ def write_common_3500_file(common: str) -> None:
 
 
 def main() -> None:
-    common = download_common_3500()
+    common = load_common_3500()
     write_common_3500_file(common)
     ui_extra = collect_ui_han()
-    symbols = merge_symbols(common, ui_extra)
+    symbols = merge_symbols(common, ui_extra, CN_PUNCTUATION)
 
     body = (
         HEADER
-        + f"# --- SYMBOLS 一行（3500 常用字 + UI，共 {len(symbols)} 字）---\n"
+        + f"# --- SYMBOLS 一行（3500 常用字 + UI + 标点，共 {len(symbols)} 字）---\n"
         + symbols
         + "\n"
     )

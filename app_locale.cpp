@@ -1,8 +1,10 @@
 #include "app_locale.h"
 
 #include "settings_api.h"
+#include "stock_service.h"
 #include "ui_home.h"
 #include "ui_settings.h"
+#include "ui_stock.h"
 #include "ui_weather.h"
 #include "ui_vision.h"
 
@@ -11,7 +13,7 @@ static AppLanguage s_lang = APP_LANG_EN;
 static const char *kStringsEn[TR_COUNT] = {
     "Weather",
     "AI Vision",
-    "App 3",
+    "Stocks",
     "Settings",
     "Online",
     "Offline",
@@ -66,6 +68,17 @@ static const char *kStringsEn[TR_COUNT] = {
     "AQI %d %s",
     "AQI --",
 
+    "Stocks",
+    "No quotes yet",
+    "Updated %02d:%02d",
+    "Stocks: custom",
+    "Stocks: default",
+    "Configure Stocks",
+    "Clear Watchlist",
+    "Name",
+    "Price",
+    "Chg",
+
     "SUN",
     "MON",
     "TUE",
@@ -78,7 +91,7 @@ static const char *kStringsEn[TR_COUNT] = {
 static const char *kStringsZh[TR_COUNT] = {
     "天气",
     "AI识图",
-    "应用3",
+    "股票",
     "设置",
     "在线",
     "离线",
@@ -133,6 +146,17 @@ static const char *kStringsZh[TR_COUNT] = {
     "AQI %d %s",
     "AQI --",
 
+    "股票",
+    "暂无行情",
+    "更新 %02d:%02d",
+    "自选: 已配置",
+    "自选: 默认",
+    "配置自选股",
+    "清除自选",
+    "名称",
+    "现价",
+    "涨跌",
+
     "周日",
     "周一",
     "周二",
@@ -181,8 +205,10 @@ void app_locale_toggle(void) {
 }
 
 void app_locale_refresh_all(void) {
+  stock_service_on_locale_changed();
   ui_home_refresh_locale();
   ui_settings_refresh();
   ui_weather_refresh();
+  ui_stock_refresh();
   ui_vision_refresh();
 }

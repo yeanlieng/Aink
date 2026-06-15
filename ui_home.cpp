@@ -3,6 +3,7 @@
 #include "app_locale.h"
 #include "weather_icons.h"
 #include "weather_service.h"
+#include "stock_service.h"
 #include "settings_icons.h"
 #include "settings_api.h"
 #include "ui_fonts.h"
@@ -22,6 +23,9 @@ static lv_obj_t *s_visionIconCanvas = nullptr;
 static lv_obj_t *s_visionHintLabel = nullptr;
 static lv_obj_t *s_settingsIconCanvas = nullptr;
 static lv_obj_t *s_settingsStatusLabel = nullptr;
+static lv_obj_t *s_stockIconCanvas = nullptr;
+static lv_obj_t *s_stockPreviewLabel = nullptr;
+static lv_color_t s_stockIconBuf[SETTINGS_TILE_ICON_PX * SETTINGS_TILE_ICON_PX];
 static lv_obj_t *s_detailTitle = nullptr;
 static lv_obj_t *s_detailBody = nullptr;
 static lv_color_t s_weatherIconBuf[WEATHER_TILE_ICON_PX * WEATHER_TILE_ICON_PX];
@@ -89,6 +93,48 @@ static void canvas_set_bitmap_icon(lv_obj_t *canvas, int size, const uint32_t *b
 
 static void canvas_set_settings_icon(lv_obj_t *canvas) {
   canvas_set_bitmap_icon(canvas, SETTINGS_TILE_ICON_PX, settings_gear_bitmap);
+}
+
+static void canvas_set_stock_icon(lv_obj_t *canvas) {
+  canvas_set_bitmap_icon(canvas, SETTINGS_TILE_ICON_PX, stock_chart_bitmap);
+}
+
+static void format_stock_change(int changePctX10, char *out, size_t outLen) {
+  if (changePctX10 == 0) {
+    snprintf(out, outLen, "0%%");
+    return;
+  }
+  const char sign = changePctX10 > 0 ? '+' : '-';
+  const int absVal = abs(changePctX10);
+  const int whole = absVal / 10;
+  const int frac = absVal % 10;
+  if (frac == 0) {
+    snprintf(out, outLen, "%c%d%%", sign, whole);
+  } else {
+    snprintf(out, outLen, "%c%d.%d%%", sign, whole, frac);
+  }
+}
+
+static void bind_stock_tile(void) {
+  if (s_stockPreviewLabel == nullptr) {
+    return;
+  }
+
+  const StockQuote *preview = stock_service_get_tile_preview();
+  char line[20];
+  if (preview == nullptr) {
+    snprintf(line, sizeof(line), "--");
+  } else {
+    char change[12];
+    char label[STOCK_NAME_LEN];
+    format_stock_change(preview->changePctX10, change, sizeof(change));
+    stock_service_format_display_label(preview, label, sizeof(label));
+    snprintf(line, sizeof(line), "%s %s", label, change);
+  }
+  lv_label_set_text(s_stockPreviewLabel, line);
+  if (s_stockIconCanvas != nullptr) {
+    canvas_set_stock_icon(s_stockIconCanvas);
+  }
 }
 
 static void canvas_set_vision_icon(lv_obj_t *canvas) {
@@ -224,6 +270,23 @@ void ui_home_init(void) {
       style_tile_text(s_tileLabels[i]);
       lv_obj_align(s_tileLabels[i], LV_ALIGN_TOP_MID, 0, 58);
       bind_vision_tile();
+    } else if (i == 2) {
+      s_stockIconCanvas = lv_canvas_create(s_tiles[i]);
+      lv_canvas_set_buffer(s_stockIconCanvas, s_stockIconBuf,
+                           SETTINGS_TILE_ICON_PX, SETTINGS_TILE_ICON_PX,
+                           LV_IMG_CF_TRUE_COLOR);
+      lv_obj_align(s_stockIconCanvas, LV_ALIGN_TOP_MID, 0, 6);
+
+      s_stockPreviewLabel = lv_label_create(s_tiles[i]);
+      style_tile_text(s_stockPreviewLabel);
+      lv_label_set_text(s_stockPreviewLabel, "--");
+      lv_obj_align(s_stockPreviewLabel, LV_ALIGN_TOP_MID, 0, 40);
+
+      s_tileLabels[i] = lv_label_create(s_tiles[i]);
+      lv_label_set_text(s_tileLabels[i], app_tr(tile_str_id(i)));
+      style_tile_text(s_tileLabels[i]);
+      lv_obj_align(s_tileLabels[i], LV_ALIGN_TOP_MID, 0, 58);
+      bind_stock_tile();
     } else if (i == 3) {
       s_settingsIconCanvas = lv_canvas_create(s_tiles[i]);
       lv_canvas_set_buffer(s_settingsIconCanvas, s_settingsIconBuf,
@@ -241,11 +304,6 @@ void ui_home_init(void) {
       style_tile_text(s_tileLabels[i]);
       lv_obj_align(s_tileLabels[i], LV_ALIGN_TOP_MID, 0, 58);
       bind_settings_tile();
-    } else {
-      s_tileLabels[i] = lv_label_create(s_tiles[i]);
-      lv_label_set_text(s_tileLabels[i], app_tr(tile_str_id(i)));
-      style_tile_text(s_tileLabels[i]);
-      lv_obj_center(s_tileLabels[i]);
     }
   }
 
@@ -278,6 +336,7 @@ void ui_home_init(void) {
 void ui_home_show(void) {
   bind_weather_tile();
   bind_vision_tile();
+  bind_stock_tile();
   bind_settings_tile();
   lv_scr_load(s_screenHome);
   lv_obj_invalidate(s_screenHome);
@@ -289,6 +348,14 @@ void ui_home_refresh_weather(void) {
   }
   bind_weather_tile();
   invalidate_tile(0);
+}
+
+void ui_home_refresh_stocks(void) {
+  if (s_screenHome == nullptr || lv_scr_act() != s_screenHome) {
+    return;
+  }
+  bind_stock_tile();
+  invalidate_tile(2);
 }
 
 int ui_home_get_focus(void) {
@@ -308,6 +375,7 @@ void ui_home_refresh_locale(void) {
   }
   refresh_tile_titles();
   bind_vision_tile();
+  bind_stock_tile();
   bind_settings_tile();
   lv_label_set_text(s_detailTitle, app_tr(TR_DETAIL));
   lv_label_set_text(s_detailBody, app_tr(TR_COMING_SOON));

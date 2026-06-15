@@ -19,8 +19,11 @@
 #define PREFS_KEY_AI_API_KEY        "ai_api_key"
 #define PREFS_KEY_WEATHER_API_KEY   "wx_api_key"
 #define PREFS_KEY_WEATHER_API_HOST  "wx_api_host"
+#define PREFS_KEY_STOCK_WATCHLIST   "stk_list"
 #define PREFS_API_KEY_MAX           128
 #define PREFS_WEATHER_HOST_MAX      64
+#define PREFS_WATCHLIST_MAX         128
+#define PREFS_WATCHLIST_DEFAULT     "sh600519,AAPL"
 
 static void clamp_model_index_for_provider(AiProvider provider, int *modelIndex) {
   const int count = ai_provider_model_count(provider);
@@ -292,6 +295,64 @@ void settings_api_get_weather_api_host(char *out, size_t outLen) {
   const String host = prefs.getString(PREFS_KEY_WEATHER_API_HOST, "");
   prefs.end();
   snprintf(out, outLen, "%s", host.c_str());
+}
+
+void settings_api_get_watchlist(char *out, size_t outLen) {
+  if (out == nullptr || outLen == 0) {
+    return;
+  }
+
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, true);
+  const String list = prefs.getString(PREFS_KEY_STOCK_WATCHLIST, PREFS_WATCHLIST_DEFAULT);
+  prefs.end();
+  snprintf(out, outLen, "%s", list.c_str());
+}
+
+void settings_api_set_watchlist(const char *watchlist) {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  if (watchlist == nullptr || watchlist[0] == '\0') {
+    prefs.putString(PREFS_KEY_STOCK_WATCHLIST, PREFS_WATCHLIST_DEFAULT);
+  } else {
+    prefs.putString(PREFS_KEY_STOCK_WATCHLIST, watchlist);
+  }
+  prefs.end();
+}
+
+void settings_api_clear_watchlist(void) {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.remove(PREFS_KEY_STOCK_WATCHLIST);
+  prefs.end();
+}
+
+bool settings_api_has_watchlist(void) {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, true);
+  const bool hasKey = prefs.isKey(PREFS_KEY_STOCK_WATCHLIST);
+  const String list = prefs.getString(PREFS_KEY_STOCK_WATCHLIST, "");
+  prefs.end();
+  return hasKey && list.length() > 0;
+}
+
+int settings_api_watchlist_count(void) {
+  char list[PREFS_WATCHLIST_MAX];
+  settings_api_get_watchlist(list, sizeof(list));
+
+  int count = 0;
+  char *savePtr = nullptr;
+  char *token = strtok_r(list, ",", &savePtr);
+  while (token != nullptr) {
+    while (*token == ' ' || *token == '\t') {
+      token++;
+    }
+    if (*token != '\0') {
+      count++;
+    }
+    token = strtok_r(nullptr, ",", &savePtr);
+  }
+  return count;
 }
 
 bool settings_api_consume_force_portal_boot(void) {

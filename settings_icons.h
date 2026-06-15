@@ -77,4 +77,40 @@ static const uint32_t vision_eye_bitmap[SETTINGS_ICON_SIZE] = {
   0x00000000u,
 };
 
+/** Stock chart outline (stocks tile). Source: stock.svg */
+static const uint32_t stock_chart_bitmap[SETTINGS_ICON_SIZE] = {
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+  0x0000003Fu,
+  0x00000021u,
+  0x01800021u,
+  0x07C000E3u,
+  0x0C60019Eu,
+  0x1BB00316u,
+  0x36980E18u,
+  0x6D8C1808u,
+  0xDB067008u,
+  0xB603C078u,
+  0xECE00058u,
+  0x1FA003D8u,
+  0x75A1C2D8u,
+  0x7DBD42D8u,
+  0x6DB5C2D8u,
+  0x6DB402D8u,
+  0x6DB402D8u,
+  0x6DB402D8u,
+  0x6DB402D8u,
+  0x6DB402D8u,
+  0x7FFC03F8u,
+  0x7FFFFFF8u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+};
+
 #endif

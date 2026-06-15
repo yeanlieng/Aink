@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Rasterize tile PNG icons into 1-bit C bitmask headers for ESP32."""
+"""Rasterize tile PNG/SVG icons into 1-bit C bitmask headers for ESP32."""
 
 from __future__ import annotations
 
+import io
 import os
+import re
 import sys
 
 try:
@@ -11,6 +13,11 @@ try:
 except ImportError:
     print("Install deps: pip install pillow", file=sys.stderr)
     sys.exit(1)
+
+try:
+    import cairosvg
+except ImportError:
+    cairosvg = None
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
@@ -23,6 +30,7 @@ THRESHOLD = 200
 ICON_FILES = [
     ("settings_gear_bitmap", "gear.png", "Gear outline (settings tile)."),
     ("vision_eye_bitmap", "eye.png", "Eye outline (AI vision tile)."),
+    ("stock_chart_bitmap", "stock.svg", "Stock chart outline (stocks tile)."),
 ]
 
 
@@ -32,6 +40,54 @@ def load_binary(path: str) -> Image.Image:
     img = Image.alpha_composite(bg, img)
     gray = img.convert("L")
     return gray.point(lambda p: 0 if p < THRESHOLD else 255, "1")
+
+
+def load_svg_binary(path: str) -> Image.Image:
+    if cairosvg is None:
+        print("Install deps: pip install cairosvg", file=sys.stderr)
+        sys.exit(1)
+    png = cairosvg.svg2png(url=path, output_width=RASTER_SIZE, output_height=RASTER_SIZE)
+    img = Image.open(io.BytesIO(png)).convert("RGBA")
+    bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+    img = Image.alpha_composite(bg, img)
+    gray = img.convert("L")
+    return gray.point(lambda p: 0 if p < THRESHOLD else 255, "1")
+
+
+def rasterize_tile_icon(source_path: str) -> Image.Image:
+    if source_path.lower().endswith(".svg"):
+        scaled = load_svg_binary(source_path)
+    else:
+        src = load_binary(source_path)
+        w, h = src.size
+        side = min(w, h)
+        left = (w - side) // 2
+        top = (h - side) // 2
+        cropped = src.crop((left, top, left + side, top + side))
+        scaled = cropped.resize((RASTER_SIZE, RASTER_SIZE), Image.Resampling.LANCZOS)
+        scaled = scaled.point(lambda p: 0 if p < THRESHOLD else 255, "1")
+    return to_outline(downsample(scaled, ICON_SIZE))
+
+
+def load_existing_bitmaps(header_path: str) -> dict[str, list[int]]:
+    if not os.path.isfile(header_path):
+        return {}
+    text = open(header_path, encoding="utf-8").read()
+    out: dict[str, list[int]] = {}
+    for match in re.finditer(
+        r"static const uint32_t (\w+)\[SETTINGS_ICON_SIZE\] = \{\s*([^}]+)\};",
+        text,
+        re.MULTILINE,
+    ):
+        var_name = match.group(1)
+        values = [
+            int(v.strip().rstrip("u"), 0)
+            for v in match.group(2).split(",")
+            if v.strip()
+        ]
+        if len(values) == ICON_SIZE:
+            out[var_name] = values
+    return out
 
 
 def downsample(img: Image.Image, size: int) -> Image.Image:
@@ -92,6 +148,8 @@ def preview(rows: list[int], size: int) -> None:
 
 
 def main() -> None:
+    existing = load_existing_bitmaps(OUTPUT_PATH)
+
     lines: list[str] = [
         "#ifndef SETTINGS_ICONS_H",
         "#define SETTINGS_ICONS_H",
@@ -103,24 +161,18 @@ def main() -> None:
     ]
 
     for var_name, filename, comment in ICON_FILES:
-        png_path = os.path.join(PROJECT_DIR, filename)
-        if not os.path.isfile(png_path):
-            print(f"Missing {png_path}", file=sys.stderr)
+        source_path = os.path.join(PROJECT_DIR, filename)
+        if os.path.isfile(source_path):
+            icon = rasterize_tile_icon(source_path)
+            masks = row_masks(icon)
+            print(f"\n{filename}:")
+            preview(masks, ICON_SIZE)
+        elif var_name in existing:
+            masks = existing[var_name]
+            print(f"\n{filename}: missing source, keeping existing {var_name}", file=sys.stderr)
+        else:
+            print(f"Missing {source_path}", file=sys.stderr)
             sys.exit(1)
-
-        src = load_binary(png_path)
-        w, h = src.size
-        side = min(w, h)
-        left = (w - side) // 2
-        top = (h - side) // 2
-        cropped = src.crop((left, top, left + side, top + side))
-        scaled = cropped.resize((RASTER_SIZE, RASTER_SIZE), Image.Resampling.LANCZOS)
-        scaled = scaled.point(lambda p: 0 if p < THRESHOLD else 255, "1")
-        icon = to_outline(downsample(scaled, ICON_SIZE))
-        masks = row_masks(icon)
-
-        print(f"\n{filename}:")
-        preview(masks, ICON_SIZE)
 
         lines.append(f"/** {comment} Source: {filename} */")
         lines.append(f"static const uint32_t {var_name}[SETTINGS_ICON_SIZE] = {{")

@@ -5,6 +5,7 @@
 #include "settings_api.h"
 #include "ui_fonts.h"
 #include "weather_service.h"
+#include "stock_service.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -19,6 +20,7 @@ enum SettingsPage {
   SETTINGS_PAGE_MODEL,
   SETTINGS_PAGE_MODEL_PROVIDER,
   SETTINGS_PAGE_MODEL_PRESET,
+  SETTINGS_PAGE_STOCKS,
   SETTINGS_PAGE_DISPLAY,
   SETTINGS_PAGE_ABOUT,
 };
@@ -44,6 +46,7 @@ static SettingsPage settings_page_parent(SettingsPage page) {
       return SETTINGS_PAGE_MODEL;
     case SETTINGS_PAGE_WIFI:
     case SETTINGS_PAGE_MODEL:
+    case SETTINGS_PAGE_STOCKS:
     case SETTINGS_PAGE_DISPLAY:
     case SETTINGS_PAGE_ABOUT:
       return SETTINGS_PAGE_ROOT;
@@ -55,9 +58,11 @@ static SettingsPage settings_page_parent(SettingsPage page) {
 static int page_row_count(SettingsPage page) {
   switch (page) {
     case SETTINGS_PAGE_ROOT:
-      return 4;
+      return 5;
     case SETTINGS_PAGE_WIFI:
       return 7;
+    case SETTINGS_PAGE_STOCKS:
+      return 3;
     case SETTINGS_PAGE_MODEL:
       return 5;
     case SETTINGS_PAGE_MODEL_PROVIDER:
@@ -85,6 +90,8 @@ static const char *page_title(SettingsPage page) {
       return app_tr(TR_PROVIDER_LABEL);
     case SETTINGS_PAGE_MODEL_PRESET:
       return app_tr(TR_MODEL_LABEL);
+    case SETTINGS_PAGE_STOCKS:
+      return app_tr(TR_STOCK_TITLE);
     case SETTINGS_PAGE_DISPLAY:
       return app_tr(TR_DISPLAY);
     case SETTINGS_PAGE_ABOUT:
@@ -104,6 +111,9 @@ static bool page_row_is_action(SettingsPage page, int row) {
   }
   if (page == SETTINGS_PAGE_MODEL) {
     return row == 3 || row == 4;
+  }
+  if (page == SETTINGS_PAGE_STOCKS) {
+    return row >= 1;
   }
   if (page == SETTINGS_PAGE_DISPLAY && row == 2) {
     return true;
@@ -135,9 +145,12 @@ static void build_row_text(SettingsPage page, int row, char *out, size_t outLen)
           snprintf(out, outLen, "%s", app_tr(TR_MODEL));
           break;
         case 2:
-          snprintf(out, outLen, "%s", app_tr(TR_DISPLAY));
+          snprintf(out, outLen, "%s", app_tr(TR_STOCK_TITLE));
           break;
         case 3:
+          snprintf(out, outLen, "%s", app_tr(TR_DISPLAY));
+          break;
+        case 4:
           snprintf(out, outLen, "%s", app_tr(TR_ABOUT));
           break;
         default:
@@ -175,6 +188,24 @@ static void build_row_text(SettingsPage page, int row, char *out, size_t outLen)
           break;
         case 6:
           snprintf(out, outLen, "%s", app_tr(TR_FORGET_WIFI));
+          break;
+        default:
+          snprintf(out, outLen, "");
+          break;
+      }
+      break;
+    case SETTINGS_PAGE_STOCKS:
+      switch (row) {
+        case 0:
+          snprintf(out, outLen, "%s",
+                   settings_api_has_watchlist() ? app_tr(TR_STOCK_CONFIGURED)
+                                                : app_tr(TR_STOCK_DEFAULT));
+          break;
+        case 1:
+          snprintf(out, outLen, "%s", app_tr(TR_CONFIGURE_STOCK));
+          break;
+        case 2:
+          snprintf(out, outLen, "%s", app_tr(TR_CLEAR_STOCK));
           break;
         default:
           snprintf(out, outLen, "");
@@ -388,9 +419,12 @@ SettingsActivateResult ui_settings_activate(void) {
         enter_page(SETTINGS_PAGE_MODEL);
         break;
       case 2:
-        enter_page(SETTINGS_PAGE_DISPLAY);
+        enter_page(SETTINGS_PAGE_STOCKS);
         break;
       case 3:
+        enter_page(SETTINGS_PAGE_DISPLAY);
+        break;
+      case 4:
         enter_page(SETTINGS_PAGE_ABOUT);
         break;
       default:
@@ -450,6 +484,20 @@ SettingsActivateResult ui_settings_activate(void) {
 
   if (!page_row_is_action(s_page, s_focusRow)) {
     return SETTINGS_ACT_NONE;
+  }
+
+  if (s_page == SETTINGS_PAGE_STOCKS) {
+    if (s_focusRow == 1) {
+      settings_api_request_portal_restart();
+      return SETTINGS_ACT_RESTART;
+    }
+    if (s_focusRow == 2) {
+      settings_api_clear_watchlist();
+      stock_service_invalidate_name_cache();
+      stock_service_reset();
+      update_menu_view();
+      return SETTINGS_ACT_NONE;
+    }
   }
 
   if (s_page == SETTINGS_PAGE_WIFI) {

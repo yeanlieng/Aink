@@ -3,6 +3,7 @@
 #include "app_locale.h"
 #include "ui_home.h"
 #include "ui_settings.h"
+#include "ui_stock.h"
 #include "ui_vision.h"
 #include "ui_weather.h"
 
@@ -34,12 +35,18 @@ bool ui_nav_is_vision(void) {
   return !s_onHome && ui_vision_is_active();
 }
 
+bool ui_nav_is_stock(void) {
+  return !s_onHome && ui_stock_is_active();
+}
+
 static void open_focused_tile(void) {
   const int focus = ui_home_get_focus();
   if (focus == 0) {
     ui_weather_show();
   } else if (focus == 1) {
     ui_vision_show();
+  } else if (focus == 2) {
+    ui_stock_show();
   } else if (focus == 3) {
     ui_settings_show();
   } else {

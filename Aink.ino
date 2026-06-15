@@ -6,11 +6,13 @@
 #include "EPD_1in54_V2.h"
 #include "weather_icons.h"
 #include "weather_service.h"
+#include "stock_service.h"
 #include "epaper_canvas.h"
 #include "btn_input.h"
 #include "ui_lvgl.h"
 #include "ui_home.h"
 #include "ui_weather.h"
+#include "ui_stock.h"
 #include "ui_settings.h"
 #include "ui_nav.h"
 #include "ui_vision.h"
@@ -83,12 +85,14 @@ static DisplayBootState displayBootState = DISPLAY_BOOT_READY;
 static bool networkTimeSyncRequested = false;
 static bool networkWeatherForcePending = false;
 static bool networkWeatherServicePending = false;
+static bool networkStockForcePending = false;
 static unsigned long lastUserInputMs = 0;
 static unsigned long wifiConnectStartMs = 0;
 static unsigned long nextWifiAttemptMs = 0;
 static unsigned long ntpSyncStartMs = 0;
 
 static void serviceNetworkStateMachine(bool allowBlockingWork);
+static void serviceStockNameRetry(bool wifiConnected, bool inputIdle);
 static void requestNetworkWeatherFetch(bool force);
 static bool serviceDisplayBootState(void);
 static bool isWifiConnected();
@@ -289,6 +293,7 @@ static void serviceNetworkStateMachine(bool allowBlockingWork) {
         networkState = NET_IDLE;
         beginNetworkTimeSync();
         requestNetworkWeatherFetch(true);
+        networkStockForcePending = true;
         requestDisplayRefresh(UI_REFRESH_QUALITY);
       } else if (now - wifiConnectStartMs >= WIFI_CONNECT_TIMEOUT_MS) {
         WiFi.disconnect();
@@ -370,6 +375,27 @@ static void serviceNetworkStateMachine(bool allowBlockingWork) {
   if (weather_service_consume_fresh_fetch()) {
     requestDisplayRefresh(UI_REFRESH_QUALITY);
   }
+
+  if (allowBlockingWork && !weather_service_is_busy()) {
+    const bool stockForce = networkStockForcePending;
+    networkStockForcePending = false;
+    stock_service_update(stockForce);
+    if (stock_service_consume_fresh_fetch()) {
+      requestDisplayRefresh(UI_REFRESH_QUALITY);
+    }
+  }
+}
+
+static void serviceStockNameRetry(bool wifiConnected, bool inputIdle) {
+  if (!wifiConnected || !inputIdle || portalModeActive) {
+    return;
+  }
+  if (weather_service_is_busy()) {
+    return;
+  }
+  if (stock_service_needs_name_fetch() && stock_service_retry_names()) {
+    requestDisplayRefresh(UI_REFRESH_QUALITY);
+  }
 }
 
 static bool drawQrCodeScaled(UBYTE *image, const char *text, UWORD areaX, UWORD areaY, UWORD areaSize) {
@@ -433,7 +459,59 @@ static void showSetupScreenOnEpaper() {
   Serial.println("[EPD] setup QR screen shown");
 }
 
-static const char PORTAL_HTML[] PROGMEM = R"rawliteral(
+static void portalHtmlEscape(const String &in, String &out) {
+  out = "";
+  out.reserve(in.length() + 16);
+  for (size_t i = 0; i < in.length(); i++) {
+    const char c = in.charAt(i);
+    if (c == '&') {
+      out += "&amp;";
+    } else if (c == '"') {
+      out += "&quot;";
+    } else if (c == '<') {
+      out += "&lt;";
+    } else if (c == '>') {
+      out += "&gt;";
+    } else {
+      out += c;
+    }
+  }
+}
+
+static void portalHtmlAppendConfiguredBadge(String &html, bool configured) {
+  if (configured) {
+    html += F("<span class=\"badge\">已配置</span>");
+  }
+}
+
+static void handlePortalRoot() {
+  char ssidBuf[64];
+  char weatherHostBuf[80];
+  char watchlistBuf[140];
+  settings_api_get_wifi_ssid(ssidBuf, sizeof(ssidBuf));
+
+  String storedSsid;
+  String storedPass;
+  const bool hasStoredWifi = loadStoredWiFiCredentials(storedSsid, storedPass);
+  const bool hasAiKey = settings_api_has_api_key();
+  const bool hasWeatherApi = settings_api_has_weather_api();
+  settings_api_get_weather_api_host(weatherHostBuf, sizeof(weatherHostBuf));
+
+  watchlistBuf[0] = '\0';
+  if (settings_api_has_watchlist()) {
+    settings_api_get_watchlist(watchlistBuf, sizeof(watchlistBuf));
+  }
+
+  String escSsid;
+  String escWeatherHost;
+  String escWatchlist;
+  portalHtmlEscape(String(ssidBuf), escSsid);
+  portalHtmlEscape(String(weatherHostBuf), escWeatherHost);
+  portalHtmlEscape(String(watchlistBuf), escWatchlist);
+
+  String html;
+  html.reserve(4600);
+  html += F(R"rawliteral(
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -448,26 +526,46 @@ static const char PORTAL_HTML[] PROGMEM = R"rawliteral(
     input { width: 100%; box-sizing: border-box; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; }
     button { margin-top: 18px; width: 100%; padding: 12px; font-size: 16px; border: 0; border-radius: 8px; background: #111; color: #fff; }
     .hint { margin-top: 16px; font-size: 13px; color: #666; line-height: 1.5; }
+    .badge { display: inline-block; margin-left: 8px; padding: 2px 8px; font-size: 12px; color: #0a6; background: #e8f8ef; border-radius: 999px; vertical-align: middle; }
   </style>
 </head>
 <body>
   <div class="card">
     <h2>WiFi</h2>
     <form action="/save" method="POST">
-      <label for="ssid">WiFi 名称</label>
-      <input id="ssid" name="ssid" maxlength="32" required autocomplete="off">
-      <label for="pass">WiFi 密码</label>
-      <input id="pass" name="pass" type="password" maxlength="64" autocomplete="off">
+      <label for="ssid">WiFi 名称)rawliteral");
+  portalHtmlAppendConfiguredBadge(html, hasStoredWifi || ssidBuf[0] != '\0');
+  html += F(R"rawliteral(</label>
+      <input id="ssid" name="ssid" maxlength="32" required autocomplete="off" value=")rawliteral");
+  html += escSsid;
+  html += F(R"rawliteral(">
+      <label for="pass">WiFi 密码)rawliteral");
+  portalHtmlAppendConfiguredBadge(html, hasStoredWifi && storedPass.length() > 0);
+  html += F(R"rawliteral(</label>
+      <input id="pass" name="pass" type="password" maxlength="64" autocomplete="off"
+             placeholder=")rawliteral");
+  if (hasStoredWifi && storedPass.length() > 0) {
+    html += F("已保存，留空则沿用");
+  }
+  html += F(R"rawliteral(">
       <button type="submit">连接 WiFi</button>
     </form>
-    <p class="hint">保存后设备会尝试连接路由器并重启。</p>
+    <p class="hint">保存后设备会尝试连接路由器并重启。修改 WiFi 名称时，密码留空将沿用已保存的密码。</p>
   </div>
   <div class="card">
     <h2>AI API</h2>
     <form action="/save_ai" method="POST">
-      <label for="api_key">API Key</label>
-      <input id="api_key" name="api_key" type="password" maxlength="128" required autocomplete="off"
-             placeholder="Provider API Key">
+      <label for="api_key">API Key)rawliteral");
+  portalHtmlAppendConfiguredBadge(html, hasAiKey);
+  html += F(R"rawliteral(</label>
+      <input id="api_key" name="api_key" type="password" maxlength="128" autocomplete="off"
+             placeholder=")rawliteral");
+  if (hasAiKey) {
+    html += F("已保存，留空则不修改");
+  } else {
+    html += F("Provider API Key");
+  }
+  html += F(R"rawliteral(">
       <button type="submit">保存 API Key</button>
     </form>
     <p class="hint">Provider 与 Model 在设备 Settings → Model 中选择。Kimi Platform 请使用 platform.kimi.ai 的 Key；MiMo Token Plan 请使用 tp- 开头的订阅 Key。Key 仅存于本机 NVS，不会上传到其他服务器。</p>
@@ -475,22 +573,47 @@ static const char PORTAL_HTML[] PROGMEM = R"rawliteral(
   <div class="card">
     <h2>天气 API（和风）</h2>
     <form action="/save_weather" method="POST">
-      <label for="weather_host">API Host</label>
+      <label for="weather_host">API Host)rawliteral");
+  portalHtmlAppendConfiguredBadge(html, weatherHostBuf[0] != '\0');
+  html += F(R"rawliteral(</label>
       <input id="weather_host" name="weather_host" maxlength="64" required autocomplete="off"
-             placeholder="xxx.re.qweatherapi.com">
-      <label for="weather_api_key">API Key</label>
-      <input id="weather_api_key" name="weather_api_key" type="password" maxlength="128" required autocomplete="off"
-             placeholder="QWeather Key">
+             placeholder="xxx.re.qweatherapi.com" value=")rawliteral");
+  html += escWeatherHost;
+  html += F(R"rawliteral(">
+      <label for="weather_api_key">API Key)rawliteral");
+  portalHtmlAppendConfiguredBadge(html, hasWeatherApi);
+  html += F(R"rawliteral(</label>
+      <input id="weather_api_key" name="weather_api_key" type="password" maxlength="128" autocomplete="off"
+             placeholder=")rawliteral");
+  if (hasWeatherApi) {
+    html += F("已保存，留空则不修改");
+  } else {
+    html += F("QWeather Key");
+  }
+  html += F(R"rawliteral(">
       <button type="submit">保存天气 API</button>
     </form>
     <p class="hint">Host 与 Key 在 <a href="https://console.qweather.com">console.qweather.com</a> 控制台获取。仅存于本机 NVS。也可在 Settings → WiFi 中配置。</p>
   </div>
+  <div class="card">
+    <h2>自选股</h2>
+    <form action="/save_stock" method="POST">
+      <label for="watchlist">代码列表（最多 5 个，逗号分隔)rawliteral");
+  portalHtmlAppendConfiguredBadge(html, settings_api_has_watchlist());
+  html += F(R"rawliteral(</label>
+      <input id="watchlist" name="watchlist" maxlength="128" required autocomplete="off"
+             placeholder="sh600519,AAPL,MSFT" value=")rawliteral");
+  html += escWatchlist;
+  html += F(R"rawliteral(">
+      <button type="submit">保存自选股</button>
+    </form>
+    <p class="hint">A 股：<code>sh600519</code> / <code>sz000001</code>；美股：<code>AAPL</code> / <code>TSLA</code>。保存时会替换整份列表，请在现有代码基础上增删。行情来自新浪 hq.sinajs.cn，无需 API Key。也可在 Settings → 股票 中配置。</p>
+  </div>
 </body>
 </html>
-)rawliteral";
+)rawliteral");
 
-static void handlePortalRoot() {
-  portalServer.send_P(200, "text/html; charset=utf-8", PORTAL_HTML);
+  portalServer.send(200, "text/html; charset=utf-8", html);
 }
 
 static void handlePortalSave() {
@@ -503,6 +626,15 @@ static void handlePortalSave() {
   String newSsid = portalServer.arg("ssid");
   String newPass = portalServer.hasArg("pass") ? portalServer.arg("pass") : "";
   newSsid.trim();
+  newPass.trim();
+
+  if (newPass.length() == 0) {
+    String oldSsid;
+    String oldPass;
+    if (loadStoredWiFiCredentials(oldSsid, oldPass) && oldSsid == newSsid) {
+      newPass = oldPass;
+    }
+  }
 
   if (newSsid.length() == 0) {
     portalServer.send(400, "text/html; charset=utf-8",
@@ -558,6 +690,14 @@ static void handlePortalSaveAi() {
   String apiKey = portalServer.arg("api_key");
   apiKey.trim();
   if (apiKey.length() == 0) {
+    if (settings_api_has_api_key()) {
+      portalServer.send(200, "text/html; charset=utf-8",
+                        "<!DOCTYPE html><html><head><meta charset=utf-8>"
+                        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                        "</head><body><h2>API Key 未变更</h2>"
+                        "<p>已保留现有 Key。</p><a href='/'>返回</a></body></html>");
+      return;
+    }
     portalServer.send(400, "text/html; charset=utf-8",
                       "<meta charset=utf-8><p>API Key 不能为空</p><a href='/'>返回</a>");
     return;
@@ -587,20 +727,32 @@ static void handlePortalSaveAi() {
 }
 
 static void handlePortalSaveWeather() {
-  if (!portalServer.hasArg("weather_host") || !portalServer.hasArg("weather_api_key")) {
+  if (!portalServer.hasArg("weather_host")) {
     portalServer.send(400, "text/html; charset=utf-8",
-                      "<meta charset=utf-8><p>Host 与 Key 不能为空</p><a href='/'>返回</a>");
+                      "<meta charset=utf-8><p>Host 不能为空</p><a href='/'>返回</a>");
     return;
   }
 
   String apiHost = portalServer.arg("weather_host");
-  String apiKey = portalServer.arg("weather_api_key");
+  String apiKey = portalServer.hasArg("weather_api_key") ? portalServer.arg("weather_api_key") : "";
   apiHost.trim();
   apiKey.trim();
-  if (apiHost.length() == 0 || apiKey.length() == 0) {
+  if (apiHost.length() == 0) {
     portalServer.send(400, "text/html; charset=utf-8",
-                      "<meta charset=utf-8><p>Host 与 Key 不能为空</p><a href='/'>返回</a>");
+                      "<meta charset=utf-8><p>Host 不能为空</p><a href='/'>返回</a>");
     return;
+  }
+
+  if (apiKey.length() == 0) {
+    if (settings_api_has_weather_api()) {
+      char existingKey[128];
+      settings_api_get_weather_api_key(existingKey, sizeof(existingKey));
+      apiKey = existingKey;
+    } else {
+      portalServer.send(400, "text/html; charset=utf-8",
+                        "<meta charset=utf-8><p>API Key 不能为空</p><a href='/'>返回</a>");
+      return;
+    }
   }
 
   settings_api_set_weather_api_host(apiHost.c_str());
@@ -628,6 +780,46 @@ static void handlePortalSaveWeather() {
                     "<a href='/'>返回</a></body></html>");
 }
 
+static void handlePortalSaveStock() {
+  if (!portalServer.hasArg("watchlist")) {
+    portalServer.send(400, "text/html; charset=utf-8",
+                      "<meta charset=utf-8><p>自选股不能为空</p><a href='/'>返回</a>");
+    return;
+  }
+
+  String watchlist = portalServer.arg("watchlist");
+  watchlist.trim();
+  if (watchlist.length() == 0) {
+    portalServer.send(400, "text/html; charset=utf-8",
+                      "<meta charset=utf-8><p>自选股不能为空</p><a href='/'>返回</a>");
+    return;
+  }
+
+  settings_api_set_watchlist(watchlist.c_str());
+  stock_service_invalidate_name_cache();
+  stock_service_reset();
+
+  String storedSsid;
+  String storedPass;
+  if (loadStoredWiFiCredentials(storedSsid, storedPass)) {
+    portalServer.send(200, "text/html; charset=utf-8",
+                      "<!DOCTYPE html><html><head><meta charset=utf-8>"
+                      "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                      "</head><body><h2>自选股已保存</h2>"
+                      "<p>设备即将重启并拉取行情...</p></body></html>");
+    delay(1500);
+    ESP.restart();
+    return;
+  }
+
+  portalServer.send(200, "text/html; charset=utf-8",
+                    "<!DOCTYPE html><html><head><meta charset=utf-8>"
+                    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                    "</head><body><h2>自选股已保存</h2>"
+                    "<p>请先配置 WiFi，保存后设备会自动重启。</p>"
+                    "<a href='/'>返回</a></body></html>");
+}
+
 static void setupPortalWebRoutes() {
   if (portalWebStarted) {
     return;
@@ -637,6 +829,7 @@ static void setupPortalWebRoutes() {
   portalServer.on("/save", HTTP_POST, handlePortalSave);
   portalServer.on("/save_ai", HTTP_POST, handlePortalSaveAi);
   portalServer.on("/save_weather", HTTP_POST, handlePortalSaveWeather);
+  portalServer.on("/save_stock", HTTP_POST, handlePortalSaveStock);
   portalServer.on("/generate_204", HTTP_GET, handlePortalRoot);
   portalServer.on("/hotspot-detect.html", HTTP_GET, handlePortalRoot);
   portalServer.on("/fwlink", HTTP_GET, handlePortalRoot);
@@ -698,17 +891,20 @@ static void startNormalOperation() {
   networkTimeSyncRequested = true;
   networkWeatherForcePending = false;
   networkWeatherServicePending = false;
+  networkStockForcePending = false;
   lastUserInputMs = 0;
   wifiConnectStartMs = 0;
   nextWifiAttemptMs = 0;
   ntpSyncStartMs = 0;
   weather_service_reset();
+  stock_service_reset();
 
   btn_input_init();
   ui_lvgl_init();
   app_locale_init();
   ui_home_init();
   ui_weather_init();
+  ui_stock_init();
   ui_vision_init();
   ui_settings_init();
   ui_nav_init();
@@ -918,8 +1114,11 @@ static void refreshMainUiOnDisplay(UiRefreshMode mode) {
   if (mode == UI_REFRESH_QUALITY || mode == UI_REFRESH_FULL) {
     if (ui_nav_is_weather()) {
       ui_weather_refresh();
+    } else if (ui_nav_is_stock()) {
+      ui_stock_refresh();
     } else if (ui_nav_is_home()) {
       ui_home_refresh_weather();
+      ui_home_refresh_stocks();
     }
   }
 
@@ -1146,5 +1345,6 @@ void loop() {
                              !displayRefreshPending &&
                              !epaper_upload_active() &&
                              inputIdle);
+  serviceStockNameRetry(wifiConnected, inputIdle);
   delay(50);
 }

@@ -6,7 +6,7 @@
 
 /* 无物理按键时在 Serial Monitor 发单字符模拟；接好 D6/D7 后改为 0 */
 #ifndef BTN_SERIAL_SIM
-#define BTN_SERIAL_SIM  1
+#define BTN_SERIAL_SIM  0
 #endif
 
 enum BtnId {
