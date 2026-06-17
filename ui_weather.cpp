@@ -8,6 +8,7 @@
 
 #include <Arduino.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 #define MAIN_ICON_PX       32
@@ -15,7 +16,7 @@
 #define FORECAST_COL_W     64
 #define FORECAST_COL_X0    6
 #define METRIC_COL_LEFT    6
-#define METRIC_COL_RIGHT   104
+#define METRIC_COL_RIGHT   100
 #define METRIC_ROW_H       20
 #define HEADER_DIVIDER_Y   56
 #define FORECAST_ICON_Y    60
@@ -116,11 +117,15 @@ static void format_uv_line(const WeatherSnapshot *snap, char *out, size_t outLen
   }
   const int whole = snap->uvIndexTenths / 10;
   const int frac = snap->uvIndexTenths % 10;
+  const char *level = weather_service_uv_level(snap->uvIndexTenths);
   if (frac == 0) {
-    snprintf(out, outLen, app_tr(TR_FMT_UV_INT), whole,
-             weather_service_uv_level(snap->uvIndexTenths));
+    snprintf(out, outLen, app_tr(TR_FMT_UV_INT), whole, level);
   } else {
     snprintf(out, outLen, app_tr(TR_FMT_UV_FRAC), whole, frac);
+    const size_t used = strlen(out);
+    if (used + 2 < outLen) {
+      snprintf(out + used, outLen - used, " %s", level);
+    }
   }
 }
 
@@ -200,9 +205,9 @@ static void bind_weather_data(void) {
   lv_label_set_text(s_metricLabels[4], line);
 
   if (snap.pressureHpa > 0) {
-    snprintf(line, sizeof(line), "P %dhPa", snap.pressureHpa);
+    snprintf(line, sizeof(line), app_tr(TR_FMT_PRESSURE), snap.pressureHpa);
   } else {
-    snprintf(line, sizeof(line), "P --");
+    snprintf(line, sizeof(line), "%s", app_tr(TR_FMT_PRESSURE_NA));
   }
   lv_label_set_text(s_metricLabels[5], line);
 }
@@ -218,7 +223,13 @@ static lv_obj_t *create_metric_row(lv_obj_t *parent, int index, lv_coord_t x, lv
   s_metricLabels[index] = lv_label_create(parent);
   style_text_label(s_metricLabels[index], UI_FONT_SM);
   lv_label_set_text(s_metricLabels[index], "");
-  lv_obj_set_pos(s_metricLabels[index], x + 14, y - 1);
+  const lv_coord_t labelX = x + 14;
+  const lv_coord_t labelW = (x < METRIC_COL_RIGHT)
+                                ? (METRIC_COL_RIGHT - labelX - 4)
+                                : (200 - 6 - labelX);
+  lv_obj_set_width(s_metricLabels[index], labelW);
+  lv_label_set_long_mode(s_metricLabels[index], LV_LABEL_LONG_CLIP);
+  lv_obj_set_pos(s_metricLabels[index], labelX, y - 1);
   return s_metricLabels[index];
 }
 

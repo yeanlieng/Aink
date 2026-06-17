@@ -38,6 +38,7 @@ extern "C" {
 
 // WiFi 配网
 #define WIFI_PORTAL_DNS_PORT     53
+#define PORTAL_WIFI_SCAN_MAX     20
 #define PREFS_NAMESPACE          "epaper"
 #define PREFS_KEY_SSID           "ssid"
 #define PREFS_KEY_PASS           "pass"
@@ -67,6 +68,14 @@ static bool portalModeActive = false;
 static bool portalWebStarted = false;
 static int wifiReconnectFailures = 0;
 static char portalApSsid[24];
+
+struct PortalWifiScanEntry {
+  char ssid[33];
+  int32_t rssi;
+};
+
+static PortalWifiScanEntry portalScanResults[PORTAL_WIFI_SCAN_MAX];
+static int portalScanCount = 0;
 static bool displayRefreshPending = false;
 static UiRefreshMode pendingDisplayRefreshMode = UI_REFRESH_NONE;
 static uint8_t pendingDisplayRequestCount = 0;
@@ -520,6 +529,144 @@ static void portalHtmlAppendConfiguredBadge(String &html, bool configured) {
   }
 }
 
+static void portalSortScanResults() {
+  for (int i = 0; i < portalScanCount - 1; i++) {
+    for (int j = i + 1; j < portalScanCount; j++) {
+      if (portalScanResults[j].rssi > portalScanResults[i].rssi) {
+        const PortalWifiScanEntry tmp = portalScanResults[i];
+        portalScanResults[i] = portalScanResults[j];
+        portalScanResults[j] = tmp;
+      }
+    }
+  }
+}
+
+static void portalScanNetworks() {
+  portalScanCount = 0;
+  Serial.println("[Portal] Scanning WiFi...");
+  const int found = WiFi.scanNetworks(false, true);
+  if (found < 0) {
+    Serial.printf("[Portal] Scan failed (%d)\n", found);
+    WiFi.scanDelete();
+    return;
+  }
+
+  for (int i = 0; i < found && portalScanCount < PORTAL_WIFI_SCAN_MAX; i++) {
+    String ssid = WiFi.SSID(i);
+    ssid.trim();
+    if (ssid.length() == 0 || ssid.length() > 32) {
+      continue;
+    }
+
+    bool merged = false;
+    for (int j = 0; j < portalScanCount; j++) {
+      if (ssid == portalScanResults[j].ssid) {
+        if (WiFi.RSSI(i) > portalScanResults[j].rssi) {
+          portalScanResults[j].rssi = WiFi.RSSI(i);
+        }
+        merged = true;
+        break;
+      }
+    }
+    if (merged) {
+      continue;
+    }
+
+    ssid.toCharArray(portalScanResults[portalScanCount].ssid,
+                     sizeof(portalScanResults[portalScanCount].ssid));
+    portalScanResults[portalScanCount].rssi = WiFi.RSSI(i);
+    portalScanCount++;
+  }
+
+  WiFi.scanDelete();
+  portalSortScanResults();
+  Serial.printf("[Portal] Scan done, %d networks\n", portalScanCount);
+}
+
+static bool portalScanContainsSsid(const char *ssid) {
+  if (ssid == nullptr || ssid[0] == '\0') {
+    return false;
+  }
+  for (int i = 0; i < portalScanCount; i++) {
+    if (strcmp(portalScanResults[i].ssid, ssid) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void portalEnsureApMode() {
+  if (WiFi.getMode() != WIFI_AP_STA) {
+    WiFi.mode(WIFI_AP_STA);
+  }
+  if (WiFi.softAPIP()[0] == 0) {
+    WiFi.softAP(portalApSsid);
+    delay(100);
+  }
+}
+
+static void portalRestoreApAfterFailedConnect() {
+  Serial.println("[Portal] Connect failed, restoring AP");
+  WiFi.disconnect(true);
+  delay(300);
+  portalEnsureApMode();
+  WiFi.softAP(portalApSsid);
+  delay(100);
+  portalScanNetworks();
+  portalDnsServer.start(WIFI_PORTAL_DNS_PORT, "*", WiFi.softAPIP());
+}
+
+static void portalAppendWifiNetworkFields(String &html, const char *preferredSsid) {
+  const bool hasPreferred = preferredSsid != nullptr && preferredSsid[0] != '\0';
+  const bool preferredInScan = hasPreferred && portalScanContainsSsid(preferredSsid);
+
+  html += F(R"rawliteral(<select id="ssid" name="ssid">
+        <option value="">请选择 WiFi</option>
+)rawliteral");
+
+  for (int i = 0; i < portalScanCount; i++) {
+    String escOption;
+    portalHtmlEscape(String(portalScanResults[i].ssid), escOption);
+    html += F("<option value=\"");
+    html += escOption;
+    html += '"';
+    if (hasPreferred && strcmp(portalScanResults[i].ssid, preferredSsid) == 0) {
+      html += F(" selected");
+    }
+    html += '>';
+    html += escOption;
+    html += " (";
+    html += String(portalScanResults[i].rssi);
+    html += F(" dBm)</option>\n");
+  }
+
+  if (hasPreferred && !preferredInScan) {
+    String escPreferred;
+    portalHtmlEscape(String(preferredSsid), escPreferred);
+    html += F("<option value=\"");
+    html += escPreferred;
+    html += F("\" selected>");
+    html += escPreferred;
+    html += F(" (已保存)</option>\n");
+  }
+
+  html += F(R"rawliteral(</select>
+      <p class="hint"><a href="/?rescan=1">刷新 WiFi 列表</a>（扫描约需数秒）</p>
+      <label for="ssid_manual">或手动输入名称</label>
+      <input id="ssid_manual" name="ssid_manual" maxlength="32" autocomplete="off"
+             placeholder="列表中没有时填写" value=")rawliteral");
+
+  if (hasPreferred && !preferredInScan) {
+    String escManual;
+    portalHtmlEscape(String(preferredSsid), escManual);
+    html += escManual;
+  }
+
+  html += F(R"rawliteral(">
+    <p class="hint">优先从列表选择；手动输入仅在该 WiFi 未出现在扫描结果时使用。</p>
+)rawliteral");
+}
+
 static bool portalPersistNonWifiConfig(String *errorOut) {
   if (portalServer.hasArg("api_key")) {
     String apiKey = portalServer.arg("api_key");
@@ -568,6 +715,10 @@ static bool portalPersistNonWifiConfig(String *errorOut) {
 }
 
 static void handlePortalRoot() {
+  if (portalServer.hasArg("rescan")) {
+    portalScanNetworks();
+  }
+
   char ssidBuf[64];
   char weatherHostBuf[80];
   char watchlistBuf[140];
@@ -576,6 +727,8 @@ static void handlePortalRoot() {
   String storedSsid;
   String storedPass;
   const bool hasStoredWifi = loadStoredWiFiCredentials(storedSsid, storedPass);
+  const char *preferredSsid = hasStoredWifi ? storedSsid.c_str()
+                                             : (ssidBuf[0] != '\0' ? ssidBuf : nullptr);
   const bool hasAiKey = settings_api_has_api_key();
   const bool hasWeatherApi = settings_api_has_weather_api();
   settings_api_get_weather_api_host(weatherHostBuf, sizeof(weatherHostBuf));
@@ -585,15 +738,13 @@ static void handlePortalRoot() {
     settings_api_get_watchlist(watchlistBuf, sizeof(watchlistBuf));
   }
 
-  String escSsid;
   String escWeatherHost;
   String escWatchlist;
-  portalHtmlEscape(String(ssidBuf), escSsid);
   portalHtmlEscape(String(weatherHostBuf), escWeatherHost);
   portalHtmlEscape(String(watchlistBuf), escWatchlist);
 
   String html;
-  html.reserve(4600);
+  html.reserve(6200);
   html += F(R"rawliteral(
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -606,23 +757,23 @@ static void handlePortalRoot() {
     .card { background: #fff; border-radius: 12px; padding: 20px; max-width: 420px; margin: 0 auto 16px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
     h2 { margin-top: 0; }
     label { display: block; margin: 12px 0 6px; font-size: 14px; color: #444; }
-    input { width: 100%; box-sizing: border-box; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; }
+    input, select { width: 100%; box-sizing: border-box; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; background: #fff; }
     button { margin-top: 18px; width: 100%; padding: 12px; font-size: 16px; border: 0; border-radius: 8px; background: #111; color: #fff; }
     .hint { margin-top: 16px; font-size: 13px; color: #666; line-height: 1.5; }
     .badge { display: inline-block; margin-left: 8px; padding: 2px 8px; font-size: 12px; color: #0a6; background: #e8f8ef; border-radius: 999px; vertical-align: middle; }
+    a { color: #06c; }
   </style>
 </head>
 <body>
   <form action="/save" method="POST">
   <div class="card">
     <h2>WiFi</h2>
-      <label for="ssid">WiFi 名称)rawliteral");
+      <label for="ssid">WiFi 网络)rawliteral");
   portalHtmlAppendConfiguredBadge(html, hasStoredWifi || ssidBuf[0] != '\0');
   html += F(R"rawliteral(</label>
-      <input id="ssid" name="ssid" maxlength="32" required autocomplete="off" value=")rawliteral");
-  html += escSsid;
-  html += F(R"rawliteral(">
-      <label for="pass">WiFi 密码)rawliteral");
+)rawliteral");
+  portalAppendWifiNetworkFields(html, preferredSsid);
+  html += F(R"rawliteral(      <label for="pass">WiFi 密码)rawliteral");
   portalHtmlAppendConfiguredBadge(html, hasStoredWifi && storedPass.length() > 0);
   html += F(R"rawliteral(</label>
       <input id="pass" name="pass" type="password" maxlength="64" autocomplete="off"
@@ -631,7 +782,7 @@ static void handlePortalRoot() {
     html += F("已保存，留空则沿用");
   }
   html += F(R"rawliteral(">
-    <p class="hint">修改 WiFi 名称时，密码留空将沿用已保存的密码。</p>
+    <p class="hint">修改 WiFi 时，密码留空将沿用已保存的密码（需与列表中或手动输入的 SSID 一致）。</p>
   </div>
   <div class="card">
     <h2>AI API</h2>
@@ -701,15 +852,20 @@ static void handlePortalSave() {
     return;
   }
 
-  if (!portalServer.hasArg("ssid")) {
+  if (!portalServer.hasArg("ssid") && !portalServer.hasArg("ssid_manual")) {
     portalServer.send(400, "text/html; charset=utf-8",
-                      "<meta charset=utf-8><p>SSID 不能为空</p><a href='/'>返回</a>");
+                      "<meta charset=utf-8><p>请选择或填写 WiFi 名称</p><a href='/'>返回</a>");
     return;
   }
 
-  String newSsid = portalServer.arg("ssid");
-  String newPass = portalServer.hasArg("pass") ? portalServer.arg("pass") : "";
+  String newSsid = portalServer.hasArg("ssid_manual") ? portalServer.arg("ssid_manual") : "";
   newSsid.trim();
+  if (newSsid.length() == 0 && portalServer.hasArg("ssid")) {
+    newSsid = portalServer.arg("ssid");
+    newSsid.trim();
+  }
+
+  String newPass = portalServer.hasArg("pass") ? portalServer.arg("pass") : "";
   newPass.trim();
 
   if (newPass.length() == 0) {
@@ -728,8 +884,10 @@ static void handlePortalSave() {
 
   Serial.printf("[Portal] Trying SSID: %s\n", newSsid.c_str());
   portalDnsServer.stop();
-  WiFi.softAPdisconnect(true);
-  delay(200);
+  WiFi.softAPdisconnect(false);
+  delay(100);
+  WiFi.mode(WIFI_OFF);
+  delay(300);
   WiFi.mode(WIFI_STA);
   WiFi.begin(newSsid.c_str(), newPass.c_str());
 
@@ -750,13 +908,9 @@ static void handlePortalSave() {
     return;
   }
 
-  Serial.println("[Portal] Connect failed, restoring AP");
-  WiFi.disconnect(true);
-  delay(200);
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(portalApSsid);
-  portalDnsServer.start(WIFI_PORTAL_DNS_PORT, "*", WiFi.softAPIP());
+  portalRestoreApAfterFailedConnect();
 
+  Serial.printf("[Portal] Connect failed, status=%d\n", WiFi.status());
   portalServer.send(200, "text/html; charset=utf-8",
                     "<!DOCTYPE html><html><head><meta charset=utf-8>"
                     "<meta name=viewport content='width=device-width,initial-scale=1'>"
@@ -900,8 +1054,10 @@ static void setupPortalWebRoutes() {
 
 static void enterPortalMode() {
   buildPortalApSsid();
-  WiFi.mode(WIFI_AP);
+  WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(portalApSsid);
+  delay(100);
+  portalScanNetworks();
   portalDnsServer.start(WIFI_PORTAL_DNS_PORT, "*", WiFi.softAPIP());
   setupPortalWebRoutes();
 

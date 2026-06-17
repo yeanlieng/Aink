@@ -11,6 +11,7 @@ void ui_home_refresh_stocks(void);
 void ui_home_refresh_locale(void);
 void ui_home_next_focus(int *outPrevFocus);
 void ui_home_prev_focus(int *outPrevFocus);
+void ui_home_reset_focus(void);
 int ui_home_get_focus(void);
 const char *ui_home_focus_title(void);
 
