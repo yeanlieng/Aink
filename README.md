@@ -162,7 +162,7 @@ python tools/png_to_tile_icons.py
 ```
 
 - Weather icons: rasterize `wi-*.svg` → `weather_icons.h` (16×16).
-- Launcher icons: **`stock.svg`** is committed; place **`gear.png`** and **`eye.png`** in the sketch root (local only; gitignored). Run `png_to_tile_icons.py` → `settings_icons.h` (32×32 outline bitmaps for all launcher tiles).
+- Launcher icons: **`tile_clock.svg`**, **`tile_weather.svg`**, **`tile_camera.svg`**, **`tile_answerbook.svg`**, **`tile_stock.svg`**, and **`tile_settings.svg`** are committed source assets. Run `png_to_tile_icons.py` → `settings_icons.h` (32×32 1-bit bitmaps for all launcher tiles).
 
 ## Project layout
 

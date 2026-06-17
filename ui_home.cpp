@@ -2,7 +2,6 @@
 
 #include "app_locale.h"
 #include "clock_format.h"
-#include "weather_icons.h"
 #include "weather_service.h"
 #include "stock_service.h"
 #include "settings_icons.h"
@@ -61,23 +60,6 @@ static void style_tile_text(lv_obj_t *label) {
   lv_obj_set_style_text_font(label, UI_FONT_SM, LV_PART_MAIN);
 }
 
-static void canvas_set_weather_icon(lv_obj_t *canvas, WeatherIconKind kind) {
-  if ((unsigned)kind >= WEATHER_ICON_COUNT) {
-    kind = WEATHER_ICON_CLOUDY;
-  }
-
-  for (int row = 0; row < TILE_ICON_PX; row++) {
-    const int srcRow = (row * WEATHER_ICON_SIZE) / TILE_ICON_PX;
-    const uint16_t mask = weather_icon_bitmaps[kind][srcRow];
-    for (int col = 0; col < TILE_ICON_PX; col++) {
-      const int srcCol = (col * WEATHER_ICON_SIZE) / TILE_ICON_PX;
-      const bool black = (mask >> (WEATHER_ICON_SIZE - 1 - srcCol)) & 0x01;
-      lv_canvas_set_px(canvas, col, row,
-                       black ? lv_color_black() : lv_color_white());
-    }
-  }
-}
-
 static void canvas_set_bitmap_icon(lv_obj_t *canvas, const uint32_t *bitmap) {
   for (int row = 0; row < TILE_ICON_PX; row++) {
     const uint32_t mask = bitmap[row];
@@ -119,13 +101,12 @@ static void bind_clock_slot(int slot) {
 static void bind_weather_slot(int slot) {
   WeatherSnapshot snap = {};
   weather_service_get_snapshot(&snap);
+  canvas_set_bitmap_icon(s_iconCanvas[slot], weather_app_bitmap);
 
   char tempLine[8];
   if (snap.valid) {
-    canvas_set_weather_icon(s_iconCanvas[slot], snap.icon);
     snprintf(tempLine, sizeof(tempLine), "%dC", snap.tempC);
   } else {
-    canvas_set_weather_icon(s_iconCanvas[slot], WEATHER_ICON_CLOUDY);
     snprintf(tempLine, sizeof(tempLine), "--");
   }
   lv_label_set_text(s_subLabels[slot], tempLine);
