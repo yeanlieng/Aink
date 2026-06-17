@@ -191,36 +191,45 @@ static void sync_home_page(void) {
   }
 }
 
-static void invalidate_focus_tile(void) {
-  const int slot = s_logicalFocus % HOME_SLOTS_PER_PAGE;
-  if (s_logicalFocus / HOME_SLOTS_PER_PAGE == s_homePage) {
-    lv_obj_invalidate(s_tiles[slot]);
+static void restyle_home_focus(int prevFocus) {
+  if (s_logicalFocus / HOME_SLOTS_PER_PAGE != s_homePage) {
+    return;
   }
+
+  if (prevFocus / HOME_SLOTS_PER_PAGE == s_homePage) {
+    const int prevSlot = prevFocus % HOME_SLOTS_PER_PAGE;
+    style_tile(s_tiles[prevSlot], s_tileLabels[prevSlot], false);
+    lv_obj_invalidate(s_tiles[prevSlot]);
+  }
+
+  const int slot = s_logicalFocus % HOME_SLOTS_PER_PAGE;
+  style_tile(s_tiles[slot], s_tileLabels[slot], true);
+  lv_obj_invalidate(s_tiles[slot]);
 }
 
 void ui_home_next_focus(int *outPrevFocus) {
   const int prev = s_logicalFocus;
   s_logicalFocus = (s_logicalFocus + 1) % HOME_LOGICAL_COUNT;
-  sync_home_page();
+  if (prev / HOME_SLOTS_PER_PAGE == s_logicalFocus / HOME_SLOTS_PER_PAGE) {
+    restyle_home_focus(prev);
+  } else {
+    sync_home_page();
+  }
   if (outPrevFocus != nullptr) {
     *outPrevFocus = prev;
-  }
-  invalidate_focus_tile();
-  if (prev / HOME_SLOTS_PER_PAGE == s_homePage) {
-    lv_obj_invalidate(s_tiles[prev % HOME_SLOTS_PER_PAGE]);
   }
 }
 
 void ui_home_prev_focus(int *outPrevFocus) {
   const int prev = s_logicalFocus;
   s_logicalFocus = (s_logicalFocus + HOME_LOGICAL_COUNT - 1) % HOME_LOGICAL_COUNT;
-  sync_home_page();
+  if (prev / HOME_SLOTS_PER_PAGE == s_logicalFocus / HOME_SLOTS_PER_PAGE) {
+    restyle_home_focus(prev);
+  } else {
+    sync_home_page();
+  }
   if (outPrevFocus != nullptr) {
     *outPrevFocus = prev;
-  }
-  invalidate_focus_tile();
-  if (prev / HOME_SLOTS_PER_PAGE == s_homePage) {
-    lv_obj_invalidate(s_tiles[prev % HOME_SLOTS_PER_PAGE]);
   }
 }
 

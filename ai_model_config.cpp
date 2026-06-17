@@ -138,5 +138,9 @@ bool ai_provider_model_supports_vision(AiProvider provider, int modelIndex) {
     const char *id = ai_provider_model_id(provider, modelIndex);
     return strcmp(id, "mimo-v2.5") == 0 || strcmp(id, "mimo-v2-omni") == 0;
   }
+  if (provider == AI_PROVIDER_KIMI) {
+    const char *id = ai_provider_model_id(provider, modelIndex);
+    return strcmp(id, "moonshot-v1-8k-vision-preview") == 0;
+  }
   return true;
 }

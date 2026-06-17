@@ -38,10 +38,10 @@ static const char *kStringsEn[TR_COUNT] = {
     "Press A to ask",
 
     "Book of Answers",
-    "Press B for answer",
+    "Local oracle",
     "Oracle",
-    "AI Oracle",
     "Local Oracle",
+    "Offline Oracle",
 
     "Settings",
     "WiFi",
@@ -134,10 +134,10 @@ static const char *kStringsZh[TR_COUNT] = {
     "短按A求答案",
 
     "答案之书",
-    "拍照/随缘",
+    "本地问卦",
     "答案之书",
-    "AI预言",
-    "本地预言",
+    "本地问卦",
+    "离线预言",
 
     "设置",
     "无线",

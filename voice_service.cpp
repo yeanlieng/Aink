@@ -11,6 +11,7 @@
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 #include <mbedtls/base64.h>
 #include <math.h>
 #include <stdio.h>
@@ -52,6 +53,7 @@ static size_t s_jobWavLen = 0;
 static TaskHandle_t s_task = nullptr;
 static TaskHandle_t s_recordTask = nullptr;
 static volatile bool s_recordStopRequested = false;
+static bool s_localSeedCaptureActive = false;
 static portMUX_TYPE s_voiceMux = portMUX_INITIALIZER_UNLOCKED;
 static VoiceState s_state = VOICE_STATE_IDLE;
 static bool s_dirty = false;
@@ -1169,13 +1171,16 @@ bool voice_service_is_busy(void) {
   VoiceState state;
   TaskHandle_t task;
   TaskHandle_t recordTask;
+  bool localSeedCaptureActive;
   portENTER_CRITICAL(&s_voiceMux);
   state = s_state;
   task = s_task;
   recordTask = s_recordTask;
+  localSeedCaptureActive = s_localSeedCaptureActive;
   portEXIT_CRITICAL(&s_voiceMux);
   return state == VOICE_STATE_RECORDING || state == VOICE_STATE_THINKING ||
-         state == VOICE_STATE_SPEAKING || task != nullptr || recordTask != nullptr;
+         state == VOICE_STATE_SPEAKING || task != nullptr || recordTask != nullptr ||
+         localSeedCaptureActive;
 }
 
 VoiceState voice_service_state(void) {
@@ -1184,6 +1189,121 @@ VoiceState voice_service_state(void) {
   state = s_state;
   portEXIT_CRITICAL(&s_voiceMux);
   return state;
+}
+
+bool voice_service_capture_local_seed(uint32_t recordMs, uint32_t *outSeed) {
+  if (outSeed == nullptr) {
+    return false;
+  }
+  if (recordMs < 500U) {
+    recordMs = 500U;
+  }
+  if (recordMs > 4000U) {
+    recordMs = 4000U;
+  }
+
+  bool canCapture = false;
+  portENTER_CRITICAL(&s_voiceMux);
+  canCapture = !s_localSeedCaptureActive &&
+               (s_state == VOICE_STATE_IDLE || s_state == VOICE_STATE_DONE || s_state == VOICE_STATE_ERROR) &&
+               s_task == nullptr && s_recordTask == nullptr;
+  if (canCapture) {
+    s_localSeedCaptureActive = true;
+  }
+  portEXIT_CRITICAL(&s_voiceMux);
+
+  if (!canCapture) {
+    Serial.println("[Voice] local seed capture skipped: busy");
+    return false;
+  }
+
+  bool ok = false;
+  uint32_t seed = esp_random() ^ (uint32_t)millis();
+  do {
+    if (!ensureI2S()) {
+      Serial.println("[Voice] local seed microphone init failed");
+      break;
+    }
+
+    uint64_t energy[8] = {};
+    uint32_t samplesPerSegment = ((VOICE_SAMPLE_RATE * recordMs) / 1000U) / 8U;
+    if (samplesPerSegment == 0) {
+      samplesPerSegment = 1;
+    }
+
+    uint32_t zcr = 0;
+    uint32_t sampleIndex = 0;
+    uint32_t discardedBytes =
+        (VOICE_SAMPLE_RATE * VOICE_SAMPLE_BYTES * VOICE_AUDIO_PREROLL_DISCARD_MS) / 1000U;
+    discardedBytes -= discardedBytes % VOICE_SAMPLE_BYTES;
+    const uint32_t targetSamples = (VOICE_SAMPLE_RATE * recordMs) / 1000U;
+    const unsigned long startMs = millis();
+    const unsigned long timeoutMs = recordMs + 900U;
+    int16_t previous = 0;
+    bool havePrevious = false;
+    uint8_t chunk[VOICE_CAPTURE_READ_BYTES];
+
+    while (sampleIndex < targetSamples && (unsigned long)(millis() - startMs) < timeoutMs) {
+      size_t bytesRead = s_i2s.readBytes(reinterpret_cast<char *>(chunk), sizeof(chunk));
+      bytesRead -= bytesRead % VOICE_SAMPLE_BYTES;
+      if (bytesRead == 0) {
+        delay(1);
+        continue;
+      }
+
+      size_t offset = 0;
+      if (discardedBytes > 0) {
+        if (bytesRead <= discardedBytes) {
+          discardedBytes -= (uint32_t)bytesRead;
+          continue;
+        }
+        offset = discardedBytes;
+        bytesRead -= discardedBytes;
+        discardedBytes = 0;
+      }
+
+      for (size_t i = offset; i + 1 < offset + bytesRead && sampleIndex < targetSamples; i += VOICE_SAMPLE_BYTES) {
+        const int16_t sample = readLe16Sample(chunk + i);
+        if (havePrevious && ((sample ^ previous) & 0x8000)) {
+          zcr++;
+        }
+        previous = sample;
+        havePrevious = true;
+
+        uint32_t segment = sampleIndex / samplesPerSegment;
+        if (segment > 7U) {
+          segment = 7U;
+        }
+        const int32_t centered = (int32_t)sample;
+        energy[segment] += (uint64_t)(centered * centered);
+        sampleIndex++;
+      }
+    }
+
+    if (sampleIndex < VOICE_SAMPLE_RATE / 4U) {
+      Serial.printf("[Voice] local seed too few samples=%u\r\n", (unsigned)sampleIndex);
+      break;
+    }
+
+    uint32_t energyHash = 0x51ED5EEDu;
+    for (int i = 0; i < 8; i++) {
+      energyHash = energyHash * 37U + (uint32_t)(energy[i] >> 18);
+    }
+    seed ^= zcr * 16777619UL;
+    seed ^= energyHash;
+    seed ^= sampleIndex * 2654435761UL;
+    seed ^= (uint32_t)micros();
+    ok = true;
+    Serial.printf("[Voice] local seed samples=%u zcr=%u energy=%u\r\n",
+                  (unsigned)sampleIndex, (unsigned)zcr, (unsigned)energyHash);
+  } while (false);
+
+  portENTER_CRITICAL(&s_voiceMux);
+  s_localSeedCaptureActive = false;
+  portEXIT_CRITICAL(&s_voiceMux);
+
+  *outSeed = seed;
+  return ok;
 }
 
 void voice_service_status_text(char *out, size_t outLen) {

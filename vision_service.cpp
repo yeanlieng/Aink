@@ -17,7 +17,7 @@
 #include <string.h>
 
 #define VISION_HTTP_TIMEOUT_MS  60000
-#define VISION_BOOK_HTTP_TIMEOUT_MS 15000
+#define VISION_BOOK_HTTP_TIMEOUT_MS 30000
 #define VISION_MAX_JPEG_BYTES   (64 * 1024)
 #define VISION_MAX_TOKENS       1024
 #define VISION_OUTPUT_MAX_CHARS 40
@@ -25,7 +25,7 @@
 #define VISION_BOOK_OUTPUT_MAX_CHARS 20
 #define VISION_CAMERA_FRAME_WIDTH  240
 #define VISION_CAMERA_FRAME_HEIGHT 240
-#define VISION_BOOK_OBFUSCATE_BLOCK_PX 12
+#define VISION_BOOK_OBFUSCATE_BLOCK_PX 8
 
 static bool appendChar(char *buf, size_t bufLen, size_t *pos, char c) {
   if (*pos + 1 >= bufLen) {
@@ -681,10 +681,24 @@ static VisionResult loadConfiguredVisionProvider(AiProvider *outProvider, char *
     return VISION_RESULT_UNSUPPORTED;
   }
 
-  const int modelIndex = settings_api_get_model_index();
+  int modelIndex = settings_api_get_model_index();
   if (!ai_provider_model_supports_vision(provider, modelIndex)) {
-    Serial.printf("[Vision] model unsupported for vision: %s\r\n", settings_api_get_model_id());
-    return VISION_RESULT_UNSUPPORTED;
+    const char *selectedModel = ai_provider_model_id(provider, modelIndex);
+    bool foundVisionModel = false;
+    const int count = ai_provider_model_count(provider);
+    for (int i = 0; i < count; i++) {
+      if (ai_provider_model_supports_vision(provider, i)) {
+        modelIndex = i;
+        foundVisionModel = true;
+        break;
+      }
+    }
+    if (!foundVisionModel) {
+      Serial.printf("[Vision] model unsupported for vision: %s\r\n", selectedModel);
+      return VISION_RESULT_UNSUPPORTED;
+    }
+    Serial.printf("[Vision] model %s has no vision, using %s\r\n",
+                  selectedModel, ai_provider_model_id(provider, modelIndex));
   }
 
   if (apiKey != nullptr && apiKeyLen > 0) {
@@ -694,7 +708,7 @@ static VisionResult loadConfiguredVisionProvider(AiProvider *outProvider, char *
     *outProvider = provider;
   }
   if (outModel != nullptr) {
-    *outModel = settings_api_get_model_id();
+    *outModel = ai_provider_model_id(provider, modelIndex);
   }
   return VISION_RESULT_OK;
 }
@@ -968,9 +982,8 @@ VisionResult vision_service_book_answer_jpeg(const uint8_t *jpeg, size_t jpegLen
   AiProvider provider = AI_PROVIDER_OPENAI;
   VisionResult ready = loadConfiguredVisionProvider(&provider, apiKey, sizeof(apiKey), &model);
   if (ready != VISION_RESULT_OK) {
-    Serial.printf("[Vision] book provider unavailable (%d), using local answer\r\n", (int)ready);
-    chooseBookFallbackAnswer(outText, outLen);
-    return VISION_RESULT_LOCAL_FALLBACK;
+    Serial.printf("[Vision] book provider unavailable (%d)\r\n", (int)ready);
+    return ready;
   }
 
   uint8_t *obfuscated = nullptr;

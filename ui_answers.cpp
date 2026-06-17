@@ -4,7 +4,7 @@
 #include "bookofanswers.h"
 #include "camera_service.h"
 #include "ui_fonts.h"
-#include "vision_service.h"
+#include "voice_service.h"
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -15,12 +15,14 @@
 
 #define ANSWERS_TASK_STACK_BYTES         16384
 #define ANSWERS_PREVIEW_TASK_STACK_BYTES 12288
-#define ANSWERS_PREVIEW_MS               3000U
+#define ANSWERS_PREVIEW_MS               1200U
 #define ANSWERS_PREVIEW_FRAME_X          49
 #define ANSWERS_PREVIEW_FRAME_Y          55
 #define ANSWERS_PREVIEW_FRAME_SIZE       102
 #define ANSWERS_CAPTURE_MAX_JPEG_BYTES   (64 * 1024)
-#define ANSWERS_PREVIEW_BLOCK_PX         10
+#define ANSWERS_PREVIEW_BLOCK_PX         7
+#define ANSWERS_MODE_COUNT               3
+#define ANSWERS_VOICE_RECORD_MS          2600U
 
 typedef enum {
   ANSWERS_VIEW_MENU = 0,
@@ -29,33 +31,51 @@ typedef enum {
   ANSWERS_VIEW_RESULT,
 } AnswersView;
 
+typedef enum {
+  ANSWERS_MODE_CAMERA = 0,
+  ANSWERS_MODE_VOICE,
+  ANSWERS_MODE_AUTO,
+} AnswersMode;
+
+typedef enum {
+  ANSWERS_LOCAL_OK = 0,
+  ANSWERS_LOCAL_CAMERA_FAIL,
+  ANSWERS_LOCAL_MIC_FAIL,
+  ANSWERS_LOCAL_TASK_FAIL,
+} AnswersLocalResult;
+
 static lv_obj_t *s_screenAnswers = nullptr;
 static lv_obj_t *s_titleLabel = nullptr;
-static lv_obj_t *s_optionLabels[2] = {nullptr, nullptr};
+static lv_obj_t *s_optionLabels[ANSWERS_MODE_COUNT] = {nullptr, nullptr, nullptr};
 static lv_obj_t *s_answerLabel = nullptr;
+static lv_obj_t *s_answerSubLabel = nullptr;
 static lv_obj_t *s_hintLabel = nullptr;
 static lv_obj_t *s_previewFrame = nullptr;
 static lv_obj_t *s_previewCanvas = nullptr;
 static lv_color_t *s_previewBuf = nullptr;
 
 static AnswersView s_view = ANSWERS_VIEW_MENU;
-static uint8_t s_selectedOption = 0;
+static AnswersMode s_selectedMode = ANSWERS_MODE_CAMERA;
+static AnswersMode s_activeMode = ANSWERS_MODE_AUTO;
 static bool s_busy = false;
 static TaskHandle_t s_askTask = nullptr;
 static TaskHandle_t s_previewTask = nullptr;
 static portMUX_TYPE s_resultMux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_visible = false;
 static bool s_resultReady = false;
-static VisionResult s_resultCode = VISION_RESULT_HTTP_FAIL;
-static char s_resultText[64];
+static AnswersLocalResult s_resultCode = ANSWERS_LOCAL_TASK_FAIL;
+static char s_resultMain[40];
+static char s_resultSub[96];
+static uint16_t s_resultNumber = 0;
 static bool s_previewEnabled = false;
 static bool s_previewFrozen = false;
 static bool s_previewHasFrame = false;
 static uint32_t s_previewSeq = 0;
 static uint32_t s_previewAppliedSeq = 0;
 static uint8_t s_previewBits[CAMERA_PREVIEW_BYTES];
-static char s_currentAnswer[64];
-static char s_currentSource[32];
+static char s_currentMain[40];
+static char s_currentSub[96];
+static char s_currentFooter[40];
 
 static void answersPreviewTask(void *param);
 static void ensurePreviewTask(void);
@@ -77,6 +97,68 @@ static void setHidden(lv_obj_t *obj, bool hidden) {
     lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+static const char *answersModeTitle(AnswersMode mode) {
+  switch (mode) {
+    case ANSWERS_MODE_CAMERA:
+      return "观象问卦";
+    case ANSWERS_MODE_VOICE:
+      return "开口问天";
+    case ANSWERS_MODE_AUTO:
+    default:
+      return "天机自动";
+  }
+}
+
+static const char *answersBusyText(AnswersMode mode) {
+  switch (mode) {
+    case ANSWERS_MODE_CAMERA:
+      return "正在观察宇宙表情";
+    case ANSWERS_MODE_VOICE:
+      return "正在偷听命运碎碎念";
+    case ANSWERS_MODE_AUTO:
+    default:
+      return "天机转圈中";
+  }
+}
+
+static const char *answersErrorText(AnswersLocalResult result) {
+  switch (result) {
+    case ANSWERS_LOCAL_CAMERA_FAIL:
+      return "相机闭眼了";
+    case ANSWERS_LOCAL_MIC_FAIL:
+      return "麦克风装睡";
+    case ANSWERS_LOCAL_TASK_FAIL:
+    default:
+      return "天机卡壳";
+  }
+}
+
+static void formatAnswerFooter(AnswersMode mode, uint16_t number, char *out, size_t outLen) {
+  if (out == nullptr || outLen == 0) {
+    return;
+  }
+  snprintf(out, outLen, "%s  #%03u", answersModeTitle(mode), (unsigned)number);
+}
+
+static void copyPickedAnswer(uint32_t seed, AnswersMode mode,
+                             char *outMain, size_t mainLen,
+                             char *outSub, size_t subLen,
+                             char *outFooter, size_t footerLen,
+                             uint16_t *outNumber) {
+  uint16_t number = 0;
+  const BookAnswer *answer = bookofanswers_pick(seed, &number);
+  if (outMain != nullptr && mainLen > 0) {
+    snprintf(outMain, mainLen, "【%s】", answer->mainText);
+  }
+  if (outSub != nullptr && subLen > 0) {
+    snprintf(outSub, subLen, "%s", answer->subText);
+  }
+  formatAnswerFooter(mode, number, outFooter, footerLen);
+  if (outNumber != nullptr) {
+    *outNumber = number;
   }
 }
 
@@ -181,41 +263,25 @@ static bool consumePreviewFrame(void) {
   return true;
 }
 
-static const char *answersErrorText(VisionResult result) {
-  switch (result) {
-    case VISION_RESULT_NO_CAMERA:
-      return app_tr(TR_VISION_NO_CAMERA);
-    case VISION_RESULT_NO_WIFI:
-      return app_tr(TR_VISION_NO_WIFI);
-    case VISION_RESULT_NO_API:
-      return app_tr(TR_VISION_NO_API);
-    case VISION_RESULT_UNSUPPORTED:
-      return app_tr(TR_VISION_UNSUPPORTED);
-    case VISION_RESULT_CAPTURE_FAIL:
-      return "读图失败";
-    case VISION_RESULT_PARSE_FAIL:
-      return "解析失败";
-    default:
-      return app_tr(TR_VISION_FAIL);
-  }
-}
-
 static void showMenu(void) {
   s_view = ANSWERS_VIEW_MENU;
   setPreviewState(false, false);
   setHidden(s_previewFrame, true);
   setHidden(s_answerLabel, true);
-  setHidden(s_optionLabels[0], false);
-  setHidden(s_optionLabels[1], false);
+  setHidden(s_answerSubLabel, true);
+  for (int i = 0; i < ANSWERS_MODE_COUNT; i++) {
+    setHidden(s_optionLabels[i], false);
+  }
 
   lv_label_set_text(s_titleLabel, app_tr(TR_ANSWERBOOK_TITLE));
-  char line0[32];
-  char line1[32];
-  snprintf(line0, sizeof(line0), "%s拍图问事", s_selectedOption == 0 ? "> " : "  ");
-  snprintf(line1, sizeof(line1), "%s随缘启动", s_selectedOption == 1 ? "> " : "  ");
-  lv_label_set_text(s_optionLabels[0], line0);
-  lv_label_set_text(s_optionLabels[1], line1);
-  lv_label_set_text(s_hintLabel, "A next  B confirm");
+  for (int i = 0; i < ANSWERS_MODE_COUNT; i++) {
+    char line[48];
+    snprintf(line, sizeof(line), "%s%s",
+             s_selectedMode == (AnswersMode)i ? "> " : "  ",
+             answersModeTitle((AnswersMode)i));
+    lv_label_set_text(s_optionLabels[i], line);
+  }
+  lv_label_set_text(s_hintLabel, "A切换  B启动  长按A返回");
   lv_obj_invalidate(s_screenAnswers);
 }
 
@@ -223,44 +289,53 @@ static void showCamera(void) {
   ensurePreviewTask();
   s_view = ANSWERS_VIEW_CAMERA;
   setPreviewState(true, false);
-  setHidden(s_optionLabels[0], true);
-  setHidden(s_optionLabels[1], true);
+  for (int i = 0; i < ANSWERS_MODE_COUNT; i++) {
+    setHidden(s_optionLabels[i], true);
+  }
   setHidden(s_answerLabel, true);
+  setHidden(s_answerSubLabel, true);
   setHidden(s_previewFrame, false);
 
-  lv_label_set_text(s_titleLabel, "拍图问事");
-  lv_label_set_text(s_hintLabel, "短按A拍摄");
+  lv_label_set_text(s_titleLabel, answersModeTitle(ANSWERS_MODE_CAMERA));
+  lv_label_set_text(s_hintLabel, "A/B拍摄，表情不用太庄严");
   lv_obj_invalidate(s_screenAnswers);
 }
 
-static void showBusy(void) {
+static void showBusy(AnswersMode mode) {
   s_view = ANSWERS_VIEW_BUSY;
-  setPreviewState(true, true);
-  setHidden(s_optionLabels[0], true);
-  setHidden(s_optionLabels[1], true);
+  setPreviewState(mode == ANSWERS_MODE_CAMERA, true);
+  for (int i = 0; i < ANSWERS_MODE_COUNT; i++) {
+    setHidden(s_optionLabels[i], true);
+  }
   setHidden(s_answerLabel, true);
-  setHidden(s_previewFrame, false);
+  setHidden(s_answerSubLabel, true);
+  setHidden(s_previewFrame, mode != ANSWERS_MODE_CAMERA);
 
-  lv_label_set_text(s_titleLabel, "拍图问事");
-  lv_label_set_text(s_hintLabel, "少女祈福中");
+  lv_label_set_text(s_titleLabel, answersModeTitle(mode));
+  lv_label_set_text(s_hintLabel, answersBusyText(mode));
   lv_obj_invalidate(s_screenAnswers);
 }
 
-static void showResult(const char *answer, const char *source) {
+static void showResult(const char *mainText, const char *subText, const char *footer) {
   s_view = ANSWERS_VIEW_RESULT;
   setPreviewState(false, false);
   setHidden(s_previewFrame, true);
-  setHidden(s_optionLabels[0], true);
-  setHidden(s_optionLabels[1], true);
+  for (int i = 0; i < ANSWERS_MODE_COUNT; i++) {
+    setHidden(s_optionLabels[i], true);
+  }
   setHidden(s_answerLabel, false);
+  setHidden(s_answerSubLabel, false);
 
-  snprintf(s_currentAnswer, sizeof(s_currentAnswer), "%s",
-           answer != nullptr ? answer : "--");
-  snprintf(s_currentSource, sizeof(s_currentSource), "%s",
-           source != nullptr ? source : "");
+  snprintf(s_currentMain, sizeof(s_currentMain), "%s",
+           mainText != nullptr ? mainText : "【未知】");
+  snprintf(s_currentSub, sizeof(s_currentSub), "%s",
+           subText != nullptr ? subText : "宇宙刚才走神了");
+  snprintf(s_currentFooter, sizeof(s_currentFooter), "%s",
+           footer != nullptr ? footer : "");
   lv_label_set_text(s_titleLabel, app_tr(TR_ANSWERBOOK_TITLE));
-  lv_label_set_text(s_answerLabel, s_currentAnswer);
-  lv_label_set_text(s_hintLabel, s_currentSource);
+  lv_label_set_text(s_answerLabel, s_currentMain);
+  lv_label_set_text(s_answerSubLabel, s_currentSub);
+  lv_label_set_text(s_hintLabel, s_currentFooter);
   lv_obj_invalidate(s_screenAnswers);
 }
 
@@ -270,10 +345,10 @@ static void renderCurrentView(void) {
       showCamera();
       break;
     case ANSWERS_VIEW_BUSY:
-      showBusy();
+      showBusy(s_activeMode);
       break;
     case ANSWERS_VIEW_RESULT:
-      showResult(s_currentAnswer, s_currentSource);
+      showResult(s_currentMain, s_currentSub, s_currentFooter);
       break;
     case ANSWERS_VIEW_MENU:
     default:
@@ -327,31 +402,20 @@ static void ensurePreviewTask(void) {
   }
 }
 
-static uint8_t *allocJpegCopy(size_t len) {
-  uint8_t *copy = static_cast<uint8_t *>(heap_caps_malloc(len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (copy == nullptr) {
-    copy = static_cast<uint8_t *>(malloc(len));
+static AnswersLocalResult captureImageSeed(uint32_t *outSeed) {
+  if (outSeed == nullptr) {
+    return ANSWERS_LOCAL_CAMERA_FAIL;
   }
-  return copy;
-}
-
-static VisionResult captureFrameForAi(uint8_t **outJpeg, size_t *outLen) {
-  if (outJpeg == nullptr || outLen == nullptr) {
-    return VISION_RESULT_CAPTURE_FAIL;
-  }
-  *outJpeg = nullptr;
-  *outLen = 0;
-
   if (!camera_service_lock(1600)) {
     Serial.println("[Answers] camera busy while capture");
-    return VISION_RESULT_CAPTURE_FAIL;
+    return ANSWERS_LOCAL_CAMERA_FAIL;
   }
 
-  VisionResult status = VISION_RESULT_CAPTURE_FAIL;
+  AnswersLocalResult status = ANSWERS_LOCAL_CAMERA_FAIL;
   camera_fb_t *fb = nullptr;
 
   if (!camera_service_is_ready() && !camera_service_init()) {
-    status = VISION_RESULT_NO_CAMERA;
+    status = ANSWERS_LOCAL_CAMERA_FAIL;
   } else {
     camera_fb_t *warmup = camera_service_capture();
     if (warmup != nullptr) {
@@ -363,19 +427,11 @@ static VisionResult captureFrameForAi(uint8_t **outJpeg, size_t *outLen) {
         fb->len > ANSWERS_CAPTURE_MAX_JPEG_BYTES) {
       Serial.printf("[Answers] capture fail fb=%p len=%u\r\n",
                     (void *)fb, fb != nullptr ? (unsigned)fb->len : 0U);
-      status = VISION_RESULT_CAPTURE_FAIL;
+      status = ANSWERS_LOCAL_CAMERA_FAIL;
     } else {
-      uint8_t *copy = allocJpegCopy(fb->len);
-      if (copy == nullptr) {
-        Serial.printf("[Answers] jpeg copy alloc failed len=%u\r\n", (unsigned)fb->len);
-        status = VISION_RESULT_CAPTURE_FAIL;
-      } else {
-        memcpy(copy, fb->buf, fb->len);
-        *outJpeg = copy;
-        *outLen = fb->len;
-        status = VISION_RESULT_OK;
-        Serial.printf("[Answers] JPEG %u bytes captured\r\n", (unsigned)fb->len);
-      }
+      *outSeed = bookofanswers_seed_from_image_bytes(fb->buf, fb->len);
+      status = ANSWERS_LOCAL_OK;
+      Serial.printf("[Answers] image seed from JPEG %u bytes\r\n", (unsigned)fb->len);
     }
   }
 
@@ -387,23 +443,62 @@ static VisionResult captureFrameForAi(uint8_t **outJpeg, size_t *outLen) {
   return status;
 }
 
-static void answersAskTask(void *param) {
-  (void)param;
+static AnswersLocalResult buildLocalAnswer(AnswersMode mode,
+                                           char *outMain, size_t mainLen,
+                                           char *outSub, size_t subLen,
+                                           char *outFooter, size_t footerLen,
+                                           uint16_t *outNumber) {
+  uint32_t seed = 0;
+  AnswersLocalResult code = ANSWERS_LOCAL_OK;
 
-  uint8_t *jpeg = nullptr;
-  size_t jpegLen = 0;
-  char result[64];
-  result[0] = '\0';
-
-  VisionResult code = captureFrameForAi(&jpeg, &jpegLen);
-  if (code == VISION_RESULT_OK && jpeg != nullptr && jpegLen > 0) {
-    code = vision_service_book_answer_jpeg(jpeg, jpegLen, result, sizeof(result));
+  if (mode == ANSWERS_MODE_CAMERA) {
+    code = captureImageSeed(&seed);
+  } else if (mode == ANSWERS_MODE_VOICE) {
+    if (!voice_service_capture_local_seed(ANSWERS_VOICE_RECORD_MS, &seed)) {
+      code = ANSWERS_LOCAL_MIC_FAIL;
+    }
+  } else {
+    seed = bookofanswers_seed_auto();
   }
-  free(jpeg);
+
+  if (code != ANSWERS_LOCAL_OK) {
+    snprintf(outMain, mainLen, "【%s】", answersErrorText(code));
+    snprintf(outSub, subLen, "本地宇宙刚刚咳了一声");
+    formatAnswerFooter(mode, 0, outFooter, footerLen);
+    if (outNumber != nullptr) {
+      *outNumber = 0;
+    }
+    return code;
+  }
+
+  copyPickedAnswer(seed, mode, outMain, mainLen, outSub, subLen,
+                   outFooter, footerLen, outNumber);
+  return ANSWERS_LOCAL_OK;
+}
+
+static void answersAskTask(void *param) {
+  const AnswersMode mode = (AnswersMode)(uintptr_t)param;
+
+  char mainText[40];
+  char subText[96];
+  char footer[40];
+  uint16_t number = 0;
+  mainText[0] = '\0';
+  subText[0] = '\0';
+  footer[0] = '\0';
+
+  AnswersLocalResult code = buildLocalAnswer(mode,
+                                             mainText, sizeof(mainText),
+                                             subText, sizeof(subText),
+                                             footer, sizeof(footer),
+                                             &number);
 
   portENTER_CRITICAL(&s_resultMux);
   s_resultCode = code;
-  snprintf(s_resultText, sizeof(s_resultText), "%s", result);
+  snprintf(s_resultMain, sizeof(s_resultMain), "%s", mainText);
+  snprintf(s_resultSub, sizeof(s_resultSub), "%s", subText);
+  s_resultNumber = number;
+  snprintf(s_currentFooter, sizeof(s_currentFooter), "%s", footer);
   s_resultReady = true;
   s_busy = false;
   s_askTask = nullptr;
@@ -412,7 +507,7 @@ static void answersAskTask(void *param) {
   vTaskDelete(nullptr);
 }
 
-static bool startPhotoCapture(void) {
+static bool startLocalAsk(AnswersMode mode) {
   portENTER_CRITICAL(&s_resultMux);
   if (s_busy) {
     portEXIT_CRITICAL(&s_resultMux);
@@ -422,15 +517,18 @@ static bool startPhotoCapture(void) {
   s_resultReady = false;
   portEXIT_CRITICAL(&s_resultMux);
 
-  showBusy();
+  s_activeMode = mode;
+  showBusy(mode);
 
   if (xTaskCreate(answersAskTask, "answers", ANSWERS_TASK_STACK_BYTES,
-                  nullptr, 1, &s_askTask) != pdPASS) {
+                  (void *)(uintptr_t)mode, 1, &s_askTask) != pdPASS) {
     portENTER_CRITICAL(&s_resultMux);
     s_busy = false;
     s_askTask = nullptr;
     portEXIT_CRITICAL(&s_resultMux);
-    showResult(app_tr(TR_VISION_FAIL), "拍图问事");
+    char footer[40];
+    formatAnswerFooter(mode, 0, footer, sizeof(footer));
+    showResult("【天机卡壳】", "任务没开起来，稍后再问", footer);
     Serial.println("[Answers] task create failed");
     return true;
   }
@@ -450,13 +548,13 @@ void ui_answers_init(void) {
   lv_obj_set_style_text_align(s_titleLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_align(s_titleLabel, LV_ALIGN_TOP_MID, 0, 8);
 
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < ANSWERS_MODE_COUNT; i++) {
     s_optionLabels[i] = lv_label_create(s_screenAnswers);
     styleLabel(s_optionLabels[i], UI_FONT_MD);
     lv_obj_set_style_text_align(s_optionLabels[i], LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     lv_obj_set_width(s_optionLabels[i], 150);
     lv_label_set_long_mode(s_optionLabels[i], LV_LABEL_LONG_DOT);
-    lv_obj_align(s_optionLabels[i], LV_ALIGN_TOP_MID, 0, 58 + i * 34);
+    lv_obj_align(s_optionLabels[i], LV_ALIGN_TOP_MID, 0, 44 + i * 30);
   }
 
   s_answerLabel = lv_label_create(s_screenAnswers);
@@ -464,7 +562,14 @@ void ui_answers_init(void) {
   lv_obj_set_style_text_align(s_answerLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_width(s_answerLabel, 188);
   lv_label_set_long_mode(s_answerLabel, LV_LABEL_LONG_WRAP);
-  lv_obj_align(s_answerLabel, LV_ALIGN_CENTER, 0, -4);
+  lv_obj_align(s_answerLabel, LV_ALIGN_CENTER, 0, -28);
+
+  s_answerSubLabel = lv_label_create(s_screenAnswers);
+  styleLabel(s_answerSubLabel, UI_FONT_SM);
+  lv_obj_set_style_text_align(s_answerSubLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_width(s_answerSubLabel, 188);
+  lv_label_set_long_mode(s_answerSubLabel, LV_LABEL_LONG_WRAP);
+  lv_obj_align(s_answerSubLabel, LV_ALIGN_CENTER, 0, 18);
 
   s_previewFrame = lv_obj_create(s_screenAnswers);
   lv_obj_set_size(s_previewFrame, ANSWERS_PREVIEW_FRAME_SIZE,
@@ -504,7 +609,7 @@ void ui_answers_show(void) {
   s_visible = true;
   portEXIT_CRITICAL(&s_resultMux);
   if (ui_answers_is_busy()) {
-    showBusy();
+    showBusy(s_activeMode);
   } else {
     showMenu();
   }
@@ -560,7 +665,7 @@ bool ui_answers_next(UiRefreshMode *outRefreshMode) {
   }
 
   if (s_view == ANSWERS_VIEW_MENU) {
-    s_selectedOption = (s_selectedOption + 1U) % 2U;
+    s_selectedMode = (AnswersMode)(((uint8_t)s_selectedMode + 1U) % ANSWERS_MODE_COUNT);
     showMenu();
     if (outRefreshMode != nullptr) {
       *outRefreshMode = UI_REFRESH_FAST;
@@ -568,18 +673,18 @@ bool ui_answers_next(UiRefreshMode *outRefreshMode) {
     return true;
   }
   if (s_view == ANSWERS_VIEW_CAMERA) {
-    const bool started = startPhotoCapture();
+    const bool started = startLocalAsk(ANSWERS_MODE_CAMERA);
     if (started && outRefreshMode != nullptr) {
       *outRefreshMode = UI_REFRESH_NAV;
     }
     return started;
   }
   if (s_view == ANSWERS_VIEW_RESULT) {
-    showMenu();
+    const bool started = startLocalAsk(s_activeMode);
     if (outRefreshMode != nullptr) {
       *outRefreshMode = UI_REFRESH_NAV;
     }
-    return true;
+    return started;
   }
   return false;
 }
@@ -593,15 +698,22 @@ bool ui_answers_confirm(UiRefreshMode *outRefreshMode) {
   }
 
   if (s_view == ANSWERS_VIEW_MENU) {
-    if (s_selectedOption == 0) {
+    if (s_selectedMode == ANSWERS_MODE_CAMERA) {
       showCamera();
     } else {
-      showResult(bookofanswers_random_timed(), app_tr(TR_ANSWERBOOK_LOCAL_SOURCE));
+      startLocalAsk(s_selectedMode);
     }
     if (outRefreshMode != nullptr) {
       *outRefreshMode = UI_REFRESH_NAV;
     }
     return true;
+  }
+  if (s_view == ANSWERS_VIEW_CAMERA) {
+    const bool started = startLocalAsk(ANSWERS_MODE_CAMERA);
+    if (started && outRefreshMode != nullptr) {
+      *outRefreshMode = UI_REFRESH_NAV;
+    }
+    return started;
   }
   if (s_view == ANSWERS_VIEW_RESULT) {
     showMenu();
@@ -626,27 +738,27 @@ bool ui_answers_service(UiRefreshMode *outRefreshMode) {
   }
 
   bool done = false;
-  VisionResult code = VISION_RESULT_HTTP_FAIL;
-  char result[64];
-  result[0] = '\0';
+  AnswersLocalResult code = ANSWERS_LOCAL_TASK_FAIL;
+  char mainText[40];
+  char subText[96];
+  char footer[40];
+  mainText[0] = '\0';
+  subText[0] = '\0';
+  footer[0] = '\0';
 
   portENTER_CRITICAL(&s_resultMux);
   if (s_resultReady) {
     done = true;
     code = s_resultCode;
-    snprintf(result, sizeof(result), "%s", s_resultText);
+    snprintf(mainText, sizeof(mainText), "%s", s_resultMain);
+    snprintf(subText, sizeof(subText), "%s", s_resultSub);
+    formatAnswerFooter(s_activeMode, s_resultNumber, footer, sizeof(footer));
     s_resultReady = false;
   }
   portEXIT_CRITICAL(&s_resultMux);
 
   if (done) {
-    if (code == VISION_RESULT_OK) {
-      showResult(result, app_tr(TR_ANSWERBOOK_AI_SOURCE));
-    } else if (code == VISION_RESULT_LOCAL_FALLBACK) {
-      showResult(result, app_tr(TR_ANSWERBOOK_LOCAL_SOURCE));
-    } else {
-      showResult(answersErrorText(code), "拍图问事");
-    }
+    showResult(mainText, subText, footer);
     if (outRefreshMode != nullptr) {
       *outRefreshMode = UI_REFRESH_NAV;
     }

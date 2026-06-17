@@ -16,6 +16,7 @@
 
 static lv_disp_draw_buf_t s_drawBuf;
 static lv_color_t *s_buf1 = nullptr;
+static bool s_drawBufInPsram = false;
 static lv_disp_drv_t s_dispDrv;
 static lv_disp_t *s_display = nullptr;
 static uint32_t s_lastTickMs = 0;
@@ -52,9 +53,10 @@ void ui_lvgl_init(void) {
   lv_init();
   if (s_buf1 == nullptr) {
     const size_t bufBytes = sizeof(lv_color_t) * UI_DRAW_BUF_PIXELS;
-    s_buf1 = static_cast<lv_color_t *>(heap_caps_malloc(bufBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    s_buf1 = static_cast<lv_color_t *>(heap_caps_malloc(bufBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     if (s_buf1 == nullptr) {
-      s_buf1 = static_cast<lv_color_t *>(heap_caps_malloc(bufBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      s_buf1 = static_cast<lv_color_t *>(heap_caps_malloc(bufBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      s_drawBufInPsram = s_buf1 != nullptr;
     }
     if (s_buf1 == nullptr) {
       Serial.printf("[LVGL] draw buffer alloc failed bytes=%u\n", (unsigned)bufBytes);
@@ -62,7 +64,7 @@ void ui_lvgl_init(void) {
     }
     Serial.printf("[LVGL] draw buffer %u bytes in %s heap=%u psram=%u block=%u\n",
                   (unsigned)bufBytes,
-                  heap_caps_get_free_size(MALLOC_CAP_SPIRAM) > 0 ? "PSRAM/heap" : "heap",
+                  s_drawBufInPsram ? "PSRAM" : "internal",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));

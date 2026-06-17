@@ -228,6 +228,9 @@ bool ui_nav_handle(BtnAction action, UiRefreshMode *outRefreshMode) {
         go_home(outRefreshMode);
         return true;
       case BTN_ACTION_VOICE_TOGGLE:
+        if (ui_answers_is_busy()) {
+          return false;
+        }
         return open_voice_interaction(outRefreshMode);
       default:
         return false;
