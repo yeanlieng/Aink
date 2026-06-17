@@ -229,3 +229,146 @@ bool camera_service_frame_to_mono_preview100(const camera_fb_t *fb, uint8_t *out
   free(rgb);
   return true;
 }
+
+bool camera_service_frame_to_mosaic_preview100(const camera_fb_t *fb, uint8_t *outBits,
+                                               size_t outBitsLen, uint8_t blockPx) {
+  if (fb == nullptr || outBits == nullptr || outBitsLen < CAMERA_PREVIEW_BYTES) {
+    return false;
+  }
+  if (fb->width == 0 || fb->height == 0) {
+    return false;
+  }
+  if (blockPx < 2) {
+    blockPx = 2;
+  }
+
+  uint8_t *rgb = nullptr;
+  size_t rgbSize = 0;
+  if (!camera_service_frame_to_rgb888(fb, &rgb, &rgbSize)) {
+    return false;
+  }
+
+  memset(outBits, 0xFF, CAMERA_PREVIEW_BYTES);
+
+  for (int by = 0; by < CAMERA_PREVIEW_HEIGHT; by += blockPx) {
+    for (int bx = 0; bx < CAMERA_PREVIEW_WIDTH; bx += blockPx) {
+      const int blockH = (by + blockPx <= CAMERA_PREVIEW_HEIGHT)
+                             ? blockPx
+                             : (CAMERA_PREVIEW_HEIGHT - by);
+      const int blockW = (bx + blockPx <= CAMERA_PREVIEW_WIDTH)
+                             ? blockPx
+                             : (CAMERA_PREVIEW_WIDTH - bx);
+
+      uint32_t lumaSum = 0;
+      int samples = 0;
+      for (int py = 0; py < blockH; py++) {
+        const int previewY = by + py;
+        const int srcY = (previewY * (int)fb->height) / CAMERA_PREVIEW_HEIGHT;
+        for (int px = 0; px < blockW; px++) {
+          const int previewX = bx + px;
+          const int srcX = (previewX * (int)fb->width) / CAMERA_PREVIEW_WIDTH;
+          const size_t srcIndex = ((size_t)srcY * fb->width + srcX) * 3;
+          if (srcIndex + 2 >= rgbSize) {
+            continue;
+          }
+          const uint8_t r = rgb[srcIndex];
+          const uint8_t g = rgb[srcIndex + 1];
+          const uint8_t b = rgb[srcIndex + 2];
+          lumaSum += (77 * r + 150 * g + 29 * b) >> 8;
+          samples++;
+        }
+      }
+
+      const bool black = samples > 0 && (lumaSum / (uint32_t)samples) < 128;
+      if (!black) {
+        continue;
+      }
+      for (int py = 0; py < blockH; py++) {
+        for (int px = 0; px < blockW; px++) {
+          const int bitIndex = (by + py) * CAMERA_PREVIEW_WIDTH + (bx + px);
+          outBits[bitIndex / 8] &= (uint8_t)~(0x80 >> (bitIndex % 8));
+        }
+      }
+    }
+  }
+
+  free(rgb);
+  return true;
+}
+
+bool camera_service_frame_to_mosaic_jpeg(const camera_fb_t *fb, uint8_t blockPx,
+                                         uint8_t jpegQuality, uint8_t **outJpeg,
+                                         size_t *outLen) {
+  if (fb == nullptr || outJpeg == nullptr || outLen == nullptr) {
+    return false;
+  }
+  *outJpeg = nullptr;
+  *outLen = 0;
+  if (fb->width == 0 || fb->height == 0) {
+    return false;
+  }
+  if (blockPx < 2) {
+    blockPx = 2;
+  }
+
+  uint8_t *rgb = nullptr;
+  size_t rgbSize = 0;
+  if (!camera_service_frame_to_rgb888(fb, &rgb, &rgbSize)) {
+    return false;
+  }
+
+  const int w = fb->width;
+  const int h = fb->height;
+  for (int by = 0; by < h; by += blockPx) {
+    for (int bx = 0; bx < w; bx += blockPx) {
+      const int blockH = (by + blockPx <= h) ? blockPx : (h - by);
+      const int blockW = (bx + blockPx <= w) ? blockPx : (w - bx);
+
+      uint32_t sumR = 0;
+      uint32_t sumG = 0;
+      uint32_t sumB = 0;
+      const int pixelCount = blockW * blockH;
+      for (int py = 0; py < blockH; py++) {
+        for (int px = 0; px < blockW; px++) {
+          const size_t idx = ((size_t)(by + py) * w + (bx + px)) * 3;
+          if (idx + 2 >= rgbSize) {
+            continue;
+          }
+          sumR += rgb[idx];
+          sumG += rgb[idx + 1];
+          sumB += rgb[idx + 2];
+        }
+      }
+
+      const uint8_t avgR = (uint8_t)(sumR / pixelCount);
+      const uint8_t avgG = (uint8_t)(sumG / pixelCount);
+      const uint8_t avgB = (uint8_t)(sumB / pixelCount);
+      for (int py = 0; py < blockH; py++) {
+        for (int px = 0; px < blockW; px++) {
+          const size_t idx = ((size_t)(by + py) * w + (bx + px)) * 3;
+          if (idx + 2 >= rgbSize) {
+            continue;
+          }
+          rgb[idx] = avgR;
+          rgb[idx + 1] = avgG;
+          rgb[idx + 2] = avgB;
+        }
+      }
+    }
+  }
+
+  uint8_t *jpeg = nullptr;
+  size_t jpegLen = 0;
+  const bool ok = fmt2jpg(rgb, rgbSize, (uint16_t)w, (uint16_t)h, PIXFORMAT_RGB888,
+                          jpegQuality, &jpeg, &jpegLen);
+  free(rgb);
+
+  if (!ok || jpeg == nullptr || jpegLen == 0) {
+    free(jpeg);
+    return false;
+  }
+
+  *outJpeg = jpeg;
+  *outLen = jpegLen;
+  return true;
+}

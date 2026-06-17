@@ -12,5 +12,6 @@ bool ui_nav_is_settings(void);
 bool ui_nav_is_vision(void);
 bool ui_nav_is_stock(void);
 bool ui_nav_is_clock(void);
+bool ui_nav_is_answerbook(void);
 
 #endif

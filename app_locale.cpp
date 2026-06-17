@@ -7,6 +7,7 @@
 #include "ui_stock.h"
 #include "ui_weather.h"
 #include "ui_vision.h"
+#include "ui_answerbook.h"
 #include "ui_voice.h"
 #include "ui_clock.h"
 
@@ -32,6 +33,12 @@ static const char *kStringsEn[TR_COUNT] = {
     "Check WiFi",
     "Request failed",
     "Provider unsupported",
+
+    "Book of Answers",
+    "Press B for answer",
+    "Oracle",
+    "AI Oracle",
+    "Local Oracle",
 
     "Settings",
     "WiFi",
@@ -119,6 +126,12 @@ static const char *kStringsZh[TR_COUNT] = {
     "请检查网络",
     "请求失败",
     "提供商不支持",
+
+    "答案之书",
+    "拍照/随缘",
+    "答案之书",
+    "AI预言",
+    "本地预言",
 
     "设置",
     "无线",
@@ -233,4 +246,5 @@ void app_locale_refresh_all(void) {
   ui_vision_refresh();
   ui_voice_refresh();
   ui_clock_refresh_locale();
+  ui_answerbook_refresh_locale();
 }

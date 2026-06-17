@@ -149,4 +149,40 @@ static const uint32_t clock_face_bitmap[SETTINGS_ICON_SIZE] = {
   0x00000000u,
 };
 
+/** Open book icon (answer book tile). */
+static const uint32_t answerbook_bitmap[SETTINGS_ICON_SIZE] = {
+  0x00000000u,
+  0x00000000u,
+  0x0007E000u,
+  0x001FF800u,
+  0x00381C00u,
+  0x00600600u,
+  0x00C00300u,
+  0x01800180u,
+  0x0303C0C0u,
+  0x0303C0C0u,
+  0x030180C0u,
+  0x030180C0u,
+  0x0303C0C0u,
+  0x0303C0C0u,
+  0x030180C0u,
+  0x030180C0u,
+  0x0303C0C0u,
+  0x0303C0C0u,
+  0x030180C0u,
+  0x030180C0u,
+  0x01800180u,
+  0x01C00380u,
+  0x00E00700u,
+  0x00700E00u,
+  0x00381C00u,
+  0x001FF800u,
+  0x0007E000u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+};
+
 #endif

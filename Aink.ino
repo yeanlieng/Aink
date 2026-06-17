@@ -16,6 +16,7 @@
 #include "ui_settings.h"
 #include "ui_nav.h"
 #include "ui_vision.h"
+#include "ui_answerbook.h"
 #include "ui_voice.h"
 #include "ui_clock.h"
 #include "ui_refresh.h"
@@ -941,6 +942,7 @@ static void startNormalOperation() {
   ui_weather_init();
   ui_stock_init();
   ui_vision_init();
+  ui_answerbook_init();
   ui_voice_init();
   ui_clock_init();
   ui_settings_init();
@@ -1159,10 +1161,13 @@ static void refreshMainUiOnDisplay(UiRefreshMode mode) {
       ui_stock_refresh();
     } else if (ui_nav_is_clock()) {
       ui_clock_refresh();
+    } else if (ui_nav_is_answerbook()) {
+      ui_answerbook_refresh();
     } else if (ui_nav_is_home()) {
       ui_home_refresh_weather();
       ui_home_refresh_stocks();
       ui_home_refresh_clock();
+      ui_home_refresh_answerbook();
     }
   }
 
@@ -1353,6 +1358,11 @@ void loop() {
     }
   }
 
+  UiRefreshMode oracleMode = UI_REFRESH_NONE;
+  if (ui_answerbook_service(&oracleMode)) {
+    requestDisplayRefresh(oracleMode);
+  }
+
   UiRefreshMode visionMode = UI_REFRESH_NONE;
   if (ui_vision_service(&visionMode)) {
     requestDisplayRefresh(visionMode);
@@ -1398,12 +1408,14 @@ void loop() {
                          (millis() - lastUserInputMs) >= NETWORK_IDLE_AFTER_INPUT_MS;
   const bool visionIdle = !ui_vision_is_busy();
   const bool voiceIdle = !voiceBusy;
+  const bool oracleIdle = !ui_answerbook_is_busy();
   serviceNetworkStateMachine(displayBootState == DISPLAY_BOOT_READY &&
                              !displayRefreshPending &&
                              !epaper_upload_active() &&
                              inputIdle &&
                              visionIdle &&
-                             voiceIdle);
-  serviceStockNameRetry(wifiConnected, inputIdle && visionIdle && voiceIdle);
+                             voiceIdle &&
+                             oracleIdle);
+  serviceStockNameRetry(wifiConnected, inputIdle && visionIdle && voiceIdle && oracleIdle);
   delay(50);
 }

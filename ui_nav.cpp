@@ -7,6 +7,7 @@
 #include "ui_vision.h"
 #include "ui_voice.h"
 #include "ui_weather.h"
+#include "ui_answerbook.h"
 #include "ui_clock.h"
 #include "voice_service.h"
 
@@ -44,9 +45,16 @@ bool ui_nav_is_clock(void) {
   return !s_onHome && ui_clock_is_active();
 }
 
+bool ui_nav_is_answerbook(void) {
+  return !s_onHome && ui_answerbook_is_active();
+}
+
 static void go_home(UiRefreshMode *outRefreshMode) {
   if (ui_vision_is_active()) {
     ui_vision_leave();
+  }
+  if (ui_answerbook_is_active()) {
+    ui_answerbook_leave();
   }
   ui_home_show();
   s_onHome = true;
@@ -58,6 +66,9 @@ static void go_home(UiRefreshMode *outRefreshMode) {
 static bool open_voice_interaction(UiRefreshMode *outRefreshMode) {
   if (ui_vision_is_active()) {
     ui_vision_leave();
+  }
+  if (ui_answerbook_is_active()) {
+    ui_answerbook_leave();
   }
   if (!voice_service_toggle_recording()) {
     Serial.println("[Voice] toggle ignored");
@@ -82,6 +93,8 @@ static void open_focused_tile(void) {
     ui_stock_show();
   } else if (focus == 4) {
     ui_settings_show();
+  } else if (focus == 5) {
+    ui_answerbook_show();
   } else {
     ui_detail_show(ui_home_focus_title(), app_tr(TR_COMING_SOON));
   }
@@ -222,6 +235,45 @@ bool ui_nav_handle(BtnAction action, UiRefreshMode *outRefreshMode) {
     switch (action) {
       case BTN_ACTION_BACK:
         go_home(outRefreshMode);
+        return true;
+      case BTN_ACTION_VOICE_TOGGLE:
+        return open_voice_interaction(outRefreshMode);
+      default:
+        return false;
+    }
+  }
+
+  if (ui_answerbook_is_active()) {
+    switch (action) {
+      case BTN_ACTION_NEXT:
+      {
+        UiRefreshMode answerMode = UI_REFRESH_NONE;
+        if (ui_answerbook_next(&answerMode)) {
+          if (outRefreshMode != nullptr) {
+            *outRefreshMode = answerMode;
+          }
+          return true;
+        }
+        return false;
+      }
+      case BTN_ACTION_CONFIRM:
+      {
+        UiRefreshMode answerMode = UI_REFRESH_NONE;
+        if (ui_answerbook_confirm(&answerMode)) {
+          if (outRefreshMode != nullptr) {
+            *outRefreshMode = answerMode;
+          }
+          return true;
+        }
+        return false;
+      }
+      case BTN_ACTION_BACK:
+        ui_answerbook_leave();
+        ui_home_show();
+        s_onHome = true;
+        if (outRefreshMode != nullptr) {
+          *outRefreshMode = UI_REFRESH_NAV;
+        }
         return true;
       case BTN_ACTION_VOICE_TOGGLE:
         return open_voice_interaction(outRefreshMode);

@@ -35,4 +35,19 @@ bool camera_service_frame_to_rgb888(const camera_fb_t *fb, uint8_t **outRgb, siz
  */
 bool camera_service_frame_to_mono_preview100(const camera_fb_t *fb, uint8_t *outBits, size_t outBitsLen);
 
+/**
+ * Convert a captured frame to a 100x100 1bpp mosaic preview bitmap.
+ * blockPx is in preview pixels; 8-12 gives a medium mosaic on the e-paper UI.
+ */
+bool camera_service_frame_to_mosaic_preview100(const camera_fb_t *fb, uint8_t *outBits,
+                                               size_t outBitsLen, uint8_t blockPx);
+
+/**
+ * Decode a captured frame, apply RGB block mosaic, then re-encode as JPEG.
+ * Caller must free(*outJpeg) with free().
+ */
+bool camera_service_frame_to_mosaic_jpeg(const camera_fb_t *fb, uint8_t blockPx,
+                                         uint8_t jpegQuality, uint8_t **outJpeg,
+                                         size_t *outLen);
+
 #endif
