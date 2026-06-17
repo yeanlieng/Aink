@@ -2,6 +2,7 @@
 
 #include "settings_api.h"
 #include "stock_service.h"
+#include "ui_answers.h"
 #include "ui_home.h"
 #include "ui_settings.h"
 #include "ui_stock.h"
@@ -16,6 +17,7 @@ static const char *kStringsEn[TR_COUNT] = {
     "Clock",
     "Weather",
     "AI Vision",
+    "Answers",
     "Stocks",
     "Settings",
     "Online",
@@ -32,6 +34,8 @@ static const char *kStringsEn[TR_COUNT] = {
     "Check WiFi",
     "Request failed",
     "Provider unsupported",
+    "Book of Answers",
+    "Press A to ask",
 
     "Settings",
     "WiFi",
@@ -103,6 +107,7 @@ static const char *kStringsZh[TR_COUNT] = {
     "时钟",
     "天气",
     "AI识图",
+    "答案之书",
     "股票",
     "设置",
     "在线",
@@ -119,6 +124,8 @@ static const char *kStringsZh[TR_COUNT] = {
     "请检查网络",
     "请求失败",
     "提供商不支持",
+    "答案之书",
+    "短按A求答案",
 
     "设置",
     "无线",
@@ -230,6 +237,7 @@ void app_locale_refresh_all(void) {
   ui_settings_refresh();
   ui_weather_refresh();
   ui_stock_refresh();
+  ui_answers_refresh();
   ui_vision_refresh();
   ui_voice_refresh();
   ui_clock_refresh_locale();

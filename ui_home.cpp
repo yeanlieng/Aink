@@ -16,7 +16,7 @@
 
 #define TILE_ICON_PX         32
 #define HOME_SLOTS_PER_PAGE  4
-#define HOME_LOGICAL_COUNT   5
+#define HOME_LOGICAL_COUNT   6
 
 static lv_obj_t *s_screenHome = nullptr;
 static lv_obj_t *s_screenDetail = nullptr;
@@ -35,6 +35,7 @@ static AppStrId logical_tile_str_id(int logicalIndex) {
     TR_TILE_CLOCK,
     TR_TILE_WEATHER,
     TR_TILE_APP2,
+    TR_TILE_BOOK,
     TR_TILE_APP3,
     TR_TILE_SETTINGS,
   };
@@ -135,6 +136,11 @@ static void bind_vision_slot(int slot) {
   lv_label_set_text(s_subLabels[slot], app_tr(TR_VISION_HINT));
 }
 
+static void bind_book_slot(int slot) {
+  canvas_set_bitmap_icon(s_iconCanvas[slot], vision_eye_bitmap);
+  lv_label_set_text(s_subLabels[slot], app_tr(TR_BOOK_HINT));
+}
+
 static void bind_stock_slot(int slot) {
   canvas_set_bitmap_icon(s_iconCanvas[slot], stock_chart_bitmap);
 
@@ -178,9 +184,12 @@ static void bind_slot_content(int slot, int logicalIndex) {
       bind_vision_slot(slot);
       break;
     case 3:
-      bind_stock_slot(slot);
+      bind_book_slot(slot);
       break;
     case 4:
+      bind_stock_slot(slot);
+      break;
+    case 5:
       bind_settings_slot(slot);
       break;
     default:
@@ -333,7 +342,7 @@ void ui_home_refresh_stocks(void) {
 
   for (int slot = 0; slot < HOME_SLOTS_PER_PAGE; slot++) {
     const int logicalIndex = s_homePage * HOME_SLOTS_PER_PAGE + slot;
-    if (logicalIndex == 3) {
+    if (logicalIndex == 4) {
       bind_stock_slot(slot);
       lv_obj_invalidate(s_tiles[slot]);
     }
