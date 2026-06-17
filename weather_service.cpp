@@ -142,15 +142,18 @@ const char *weather_service_uv_level(int uvIndexTenths) {
   const bool zh = app_locale_get() == APP_LANG_ZH;
   const float uv = uvIndexTenths / 10.0f;
   if (uv < 3.0f) {
-    return zh ? "低" : "Low";
+    return zh ? "弱" : "Low";
   }
   if (uv < 6.0f) {
-    return zh ? "中" : "Mod";
+    return zh ? "中等" : "Mod";
   }
   if (uv < 8.0f) {
-    return zh ? "高" : "High";
+    return zh ? "强" : "High";
   }
-  return zh ? "极" : "Extreme";
+  if (uv < 11.0f) {
+    return zh ? "很强" : "VHi";
+  }
+  return zh ? "极强" : "Extr";
 }
 
 const char *weather_service_aqi_level(int usAqi) {
