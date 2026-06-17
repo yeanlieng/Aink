@@ -11,8 +11,17 @@
 #define CAMERA_PREVIEW_HEIGHT 100
 #define CAMERA_PREVIEW_BYTES ((CAMERA_PREVIEW_WIDTH * CAMERA_PREVIEW_HEIGHT + 7) / 8)
 
+typedef enum {
+  CAMERA_SERVICE_MODE_OFF = 0,
+  CAMERA_SERVICE_MODE_PREVIEW,
+  CAMERA_SERVICE_MODE_PHOTO,
+} CameraServiceMode;
+
 bool camera_service_init(void);
+bool camera_service_start_preview(void);
+bool camera_service_start_photo(void);
 bool camera_service_is_ready(void);
+CameraServiceMode camera_service_mode(void);
 
 /** Serialize esp_camera init/capture/release/deinit across apps/tasks. */
 bool camera_service_lock(uint32_t timeoutMs);

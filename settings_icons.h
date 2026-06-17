@@ -77,6 +77,42 @@ static const uint32_t vision_eye_bitmap[SETTINGS_ICON_SIZE] = {
   0x00000000u,
 };
 
+/** Book icon (answers tile). Source: answerbook.svg */
+static const uint32_t answerbook_bitmap[SETTINGS_ICON_SIZE] = {
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+  0x00018000u,
+  0x0003C000u,
+  0x03FFFFC0u,
+  0x1FFFFFF8u,
+  0x1FC3E7F8u,
+  0x1C01C038u,
+  0x1C01C038u,
+  0x1C01C038u,
+  0x1DFDFFB8u,
+  0x1DFDFFB8u,
+  0x1C01C038u,
+  0x1DFDFFB8u,
+  0x1DFDFFB8u,
+  0x1C01C038u,
+  0x1DE1C7B8u,
+  0x1DFDFFB8u,
+  0x1C0DF038u,
+  0x1C01C038u,
+  0x1C01C038u,
+  0x1C01C038u,
+  0x1DFFFFF8u,
+  0x1FFFFFF8u,
+  0x1FFFFFF8u,
+  0x1FFFFFF8u,
+  0x0C000030u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+  0x00000000u,
+};
+
 /** Stock chart outline (stocks tile). Source: stock.svg */
 static const uint32_t stock_chart_bitmap[SETTINGS_ICON_SIZE] = {
   0x00000000u,

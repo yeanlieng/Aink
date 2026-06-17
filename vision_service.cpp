@@ -1470,7 +1470,7 @@ VisionResult vision_service_describe_camera(char *outText, size_t outLen) {
   uint8_t *jpegCopy = nullptr;
   size_t jpegLen = 0;
 
-  if (!camera_service_is_ready() && !camera_service_init()) {
+  if (!camera_service_start_photo()) {
     Serial.println("[Vision] no camera");
     captureStatus = VISION_RESULT_NO_CAMERA;
   } else {

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30" fill="none">
+  <!-- Left page -->
+  <path d="M15 6 C15 6 9 5 4 7 L4 24 C9 22 15 23 15 23 Z"
+        fill="white" stroke="black" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Right page -->
+  <path d="M15 6 C15 6 21 5 26 7 L26 24 C21 22 15 23 15 23 Z"
+        fill="white" stroke="black" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Spine -->
+  <line x1="15" y1="6" x2="15" y2="23" stroke="black" stroke-width="2"/>
+  <!-- Left page lines -->
+  <line x1="7" y1="11" x2="13" y2="11.5" stroke="black" stroke-width="0.9" stroke-linecap="round"/>
+  <line x1="7" y1="14" x2="13" y2="14.5" stroke="black" stroke-width="0.9" stroke-linecap="round"/>
+  <line x1="7" y1="17" x2="13" y2="17.5" stroke="black" stroke-width="0.9" stroke-linecap="round"/>
+  <!-- Right page lines -->
+  <line x1="17" y1="11.5" x2="23" y2="11" stroke="black" stroke-width="0.9" stroke-linecap="round"/>
+  <line x1="17" y1="14.5" x2="23" y2="14" stroke="black" stroke-width="0.9" stroke-linecap="round"/>
+  <line x1="17" y1="17.5" x2="23" y2="17" stroke="black" stroke-width="0.9" stroke-linecap="round"/>
+  <!-- Bottom cover -->
+  <path d="M4 24 C9 22 15 23 15 23 C15 23 21 22 26 24 L26 25.5 C21 23.5 15 24.5 15 24.5 C15 24.5 9 23.5 4 25.5 Z"
+        fill="black" stroke="black" stroke-width="0.5"/>
+  <!-- Spine dot -->
+  <circle cx="15" cy="4.5" r="1.2" fill="black"/>
+</svg>

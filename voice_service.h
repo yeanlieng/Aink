@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef enum {
   VOICE_STATE_IDLE = 0,
@@ -20,5 +21,6 @@ bool voice_service_service(void);
 bool voice_service_is_busy(void);
 VoiceState voice_service_state(void);
 void voice_service_status_text(char *out, size_t outLen);
+bool voice_service_capture_local_seed(uint32_t recordMs, uint32_t *outSeed);
 
 #endif

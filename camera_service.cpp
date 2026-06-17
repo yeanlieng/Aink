@@ -13,6 +13,7 @@
 #include <string.h>
 
 static bool s_ready = false;
+static CameraServiceMode s_mode = CAMERA_SERVICE_MODE_OFF;
 static StaticSemaphore_t s_cameraMutexStorage;
 static SemaphoreHandle_t s_cameraMutex = nullptr;
 static portMUX_TYPE s_cameraMutexMux = portMUX_INITIALIZER_UNLOCKED;
@@ -38,7 +39,7 @@ static void setupLedFlash(int pin) {
 #endif
 }
 
-static camera_config_t buildDefaultConfig(bool usePsram) {
+static camera_config_t buildConfig(CameraServiceMode mode, bool usePsram) {
   camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -59,15 +60,16 @@ static camera_config_t buildDefaultConfig(bool usePsram) {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  /* 240x240 is all we need; UXGA DMA buffers exhaust PSRAM alongside LVGL/WiFi. */
-  config.frame_size = FRAMESIZE_240X240;
-  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = mode == CAMERA_SERVICE_MODE_PREVIEW ? FRAMESIZE_128X128 : FRAMESIZE_240X240;
+  config.pixel_format = mode == CAMERA_SERVICE_MODE_PREVIEW ? PIXFORMAT_GRAYSCALE : PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.jpeg_quality = 24;
   config.fb_count = 1;
-  config.fb_location = usePsram ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
+  config.fb_location = mode == CAMERA_SERVICE_MODE_PREVIEW
+                           ? CAMERA_FB_IN_DRAM
+                           : (usePsram ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM);
 
-  if (usePsram) {
+  if (mode == CAMERA_SERVICE_MODE_PHOTO && usePsram) {
     config.jpeg_quality = 24;
     /* Snapshot use: one buffer, stop when full — avoids FB-OVF while CPU is busy (HTTP). */
     config.fb_count = 1;
@@ -77,7 +79,7 @@ static camera_config_t buildDefaultConfig(bool usePsram) {
   return config;
 }
 
-static void applySensorDefaults(void) {
+static void applySensorDefaults(framesize_t frameSize) {
   sensor_t *sensor = esp_camera_sensor_get();
   if (sensor == nullptr) {
     return;
@@ -89,49 +91,83 @@ static void applySensorDefaults(void) {
     sensor->set_saturation(sensor, -2);
   }
 
-  sensor->set_framesize(sensor, FRAMESIZE_240X240);
+  sensor->set_framesize(sensor, frameSize);
 }
 
-bool camera_service_init(void) {
-  if (s_ready) {
+static bool startCameraMode(CameraServiceMode mode) {
+  if (s_ready && s_mode == mode) {
     return true;
+  }
+  if (s_ready) {
+    esp_camera_deinit();
+    s_ready = false;
+    s_mode = CAMERA_SERVICE_MODE_OFF;
   }
 
   const bool hasPsram = psramFound();
-  Serial.printf("[Camera] PSRAM=%s heap=%u psram=%u block=%u\r\n",
+  const bool preview = mode == CAMERA_SERVICE_MODE_PREVIEW;
+  Serial.printf("[Camera] mode=%s PSRAM=%s heap=%u psram=%u block=%u\r\n",
+                preview ? "preview-gray" : "photo-jpeg",
                 hasPsram ? "yes" : "no",
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
-  camera_config_t config = buildDefaultConfig(hasPsram);
+  camera_config_t config = buildConfig(mode, hasPsram);
   esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK && hasPsram) {
-    Serial.printf("[Camera] PSRAM init failed 0x%x, retrying in DRAM fb_count=1\r\n", err);
+  if (err != ESP_OK && mode == CAMERA_SERVICE_MODE_PHOTO && hasPsram) {
+    Serial.printf("[Camera] photo PSRAM init failed 0x%x, retrying in DRAM fb_count=1\r\n", err);
     esp_camera_deinit();
-    config = buildDefaultConfig(false);
+    config = buildConfig(mode, false);
     config.fb_count = 1;
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
     err = esp_camera_init(&config);
   }
+  if (err != ESP_OK && mode == CAMERA_SERVICE_MODE_PREVIEW) {
+    Serial.printf("[Camera] preview 128x128 gray init failed 0x%x, retrying 96x96\r\n", err);
+    esp_camera_deinit();
+    config = buildConfig(mode, false);
+    config.frame_size = FRAMESIZE_96X96;
+    err = esp_camera_init(&config);
+  }
   if (err != ESP_OK) {
-    Serial.printf("[Camera] init failed 0x%x\r\n", err);
+    Serial.printf("[Camera] %s init failed 0x%x\r\n",
+                  preview ? "preview" : "photo", err);
     return false;
   }
 
-  applySensorDefaults();
+  applySensorDefaults(config.frame_size);
 
 #if defined(LED_GPIO_NUM)
   setupLedFlash(LED_GPIO_NUM);
 #endif
 
   s_ready = true;
-  Serial.println("[Camera] ready (240x240 JPEG)");
+  s_mode = mode;
+  Serial.printf("[Camera] ready (%s %s)\r\n",
+                preview ? (config.frame_size == FRAMESIZE_96X96 ? "96x96" : "128x128") : "240x240",
+                preview ? "GRAY" : "JPEG");
   return true;
+}
+
+bool camera_service_init(void) {
+  return camera_service_start_photo();
+}
+
+bool camera_service_start_preview(void) {
+  return startCameraMode(CAMERA_SERVICE_MODE_PREVIEW);
+}
+
+bool camera_service_start_photo(void) {
+  return startCameraMode(CAMERA_SERVICE_MODE_PHOTO);
 }
 
 bool camera_service_is_ready(void) {
   return s_ready;
+}
+
+CameraServiceMode camera_service_mode(void) {
+  return s_mode;
 }
 
 bool camera_service_lock(uint32_t timeoutMs) {
@@ -155,6 +191,7 @@ void camera_service_pause(void) {
   }
   esp_camera_deinit();
   s_ready = false;
+  s_mode = CAMERA_SERVICE_MODE_OFF;
 }
 
 camera_fb_t *camera_service_capture(void) {
@@ -223,12 +260,6 @@ bool camera_service_frame_to_mono_preview100(const camera_fb_t *fb, uint8_t *out
     return false;
   }
 
-  uint8_t *rgb = nullptr;
-  size_t rgbSize = 0;
-  if (!camera_service_frame_to_rgb888(fb, &rgb, &rgbSize)) {
-    return false;
-  }
-
   memset(outBits, 0xFF, CAMERA_PREVIEW_BYTES);
 
   static const uint8_t kBayer4[4][4] = {
@@ -237,6 +268,30 @@ bool camera_service_frame_to_mono_preview100(const camera_fb_t *fb, uint8_t *out
       {3, 11, 1, 9},
       {15, 7, 13, 5},
   };
+
+  if ((fb->format == PIXFORMAT_GRAYSCALE || fb->format == PIXFORMAT_RAW8) &&
+      fb->len >= fb->width * fb->height) {
+    for (int y = 0; y < CAMERA_PREVIEW_HEIGHT; y++) {
+      const int srcY = (y * (int)fb->height) / CAMERA_PREVIEW_HEIGHT;
+      for (int x = 0; x < CAMERA_PREVIEW_WIDTH; x++) {
+        const int srcX = (x * (int)fb->width) / CAMERA_PREVIEW_WIDTH;
+        const size_t srcIndex = (size_t)srcY * fb->width + srcX;
+        const int luma = fb->buf[srcIndex];
+        const int threshold = 96 + (int)kBayer4[y & 0x03][x & 0x03] * 4;
+        if (luma < threshold) {
+          const int bitIndex = y * CAMERA_PREVIEW_WIDTH + x;
+          outBits[bitIndex / 8] &= (uint8_t)~(0x80 >> (bitIndex % 8));
+        }
+      }
+    }
+    return true;
+  }
+
+  uint8_t *rgb = nullptr;
+  size_t rgbSize = 0;
+  if (!camera_service_frame_to_rgb888(fb, &rgb, &rgbSize)) {
+    return false;
+  }
 
   for (int y = 0; y < CAMERA_PREVIEW_HEIGHT; y++) {
     const int srcY = (y * (int)fb->height) / CAMERA_PREVIEW_HEIGHT;

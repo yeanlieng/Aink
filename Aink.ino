@@ -1329,8 +1329,11 @@ static void refreshMainUiOnDisplay(UiRefreshMode mode) {
   }
 
   const bool fullInit = (mode == UI_REFRESH_FULL);
-  const bool fastEpd = (mode == UI_REFRESH_FAST || mode == UI_REFRESH_NAV);
-  const bool fullLvgl = (mode != UI_REFRESH_FAST);
+  const bool fastEpd = (mode == UI_REFRESH_FAST ||
+                        mode == UI_REFRESH_PREVIEW ||
+                        mode == UI_REFRESH_NAV);
+  const bool fullLvgl = (mode != UI_REFRESH_FAST &&
+                         mode != UI_REFRESH_PREVIEW);
 
   if (mode == UI_REFRESH_QUALITY || mode == UI_REFRESH_FULL) {
     if (ui_nav_is_weather()) {
@@ -1339,6 +1342,8 @@ static void refreshMainUiOnDisplay(UiRefreshMode mode) {
       ui_stock_refresh();
     } else if (ui_nav_is_clock()) {
       ui_clock_refresh();
+    } else if (ui_nav_is_answers()) {
+      ui_answers_refresh();
     } else if (ui_nav_is_home()) {
       ui_home_refresh_weather();
       ui_home_refresh_stocks();
@@ -1404,6 +1409,7 @@ static int refreshModePriority(UiRefreshMode mode) {
       return 3;
     case UI_REFRESH_NAV:
       return 2;
+    case UI_REFRESH_PREVIEW:
     case UI_REFRESH_FAST:
       return 1;
     default:
@@ -1417,6 +1423,8 @@ static UiRefreshMode strongerRefreshMode(UiRefreshMode a, UiRefreshMode b) {
 
 static const char *refreshModeName(UiRefreshMode mode) {
   switch (mode) {
+    case UI_REFRESH_PREVIEW:
+      return "FAST";
     case UI_REFRESH_FAST:
       return "FAST";
     case UI_REFRESH_NAV:
@@ -1436,12 +1444,23 @@ static void requestDisplayRefresh(UiRefreshMode mode) {
   }
 
   const unsigned long now = millis();
+  const bool previewRequest = (mode == UI_REFRESH_PREVIEW);
   if (!displayRefreshPending) {
     displayRefreshPending = true;
     pendingDisplayRefreshMode = mode;
     pendingDisplayRequestCount = 1;
     pendingDisplaySinceMs = now;
+  } else if (previewRequest) {
+    if (refreshModePriority(pendingDisplayRefreshMode) <= refreshModePriority(UI_REFRESH_PREVIEW)) {
+      pendingDisplayRefreshMode = UI_REFRESH_PREVIEW;
+      pendingDisplayRequestCount = 1;
+    }
   } else {
+    if (pendingDisplayRefreshMode == UI_REFRESH_PREVIEW && mode == UI_REFRESH_FAST) {
+      pendingDisplayRefreshMode = UI_REFRESH_FAST;
+      pendingDisplayRequestCount = 1;
+      return;
+    }
     pendingDisplayRequestCount++;
     pendingDisplayRefreshMode = strongerRefreshMode(pendingDisplayRefreshMode, mode);
     if (pendingDisplayRefreshMode == UI_REFRESH_FAST && pendingDisplayRequestCount > 1) {
@@ -1539,13 +1558,6 @@ void loop() {
         (void)ui_vision_run_capture();
         requestDisplayRefresh(UI_REFRESH_NAV);
       }
-      if (ui_answers_consume_capture_request()) {
-        serviceDisplayRefresh(true);
-        Serial.println("[Answers] capture pipeline starting (async)");
-        Serial.flush();
-        (void)ui_answers_run_capture();
-        requestDisplayRefresh(UI_REFRESH_NAV);
-      }
     }
   }
 
@@ -1592,13 +1604,20 @@ void loop() {
 
   const bool voiceBusy = voice_service_is_busy();
   const VoiceState voiceState = voice_service_state();
-  if (!voiceBusy || voiceState == VOICE_STATE_RECORDING) {
+  const bool answersBusy = ui_answers_is_busy();
+  const bool voiceScreenActive = ui_voice_is_active();
+  const bool voiceCanRefresh =
+      voiceState == VOICE_STATE_RECORDING ||
+      (voiceScreenActive &&
+       (voiceState == VOICE_STATE_THINKING ||
+        voiceState == VOICE_STATE_SPEAKING));
+  if (!voiceBusy || voiceCanRefresh || answersBusy) {
     serviceDisplayRefresh(false);
   }
   const bool inputIdle = lastUserInputMs == 0 ||
                          (millis() - lastUserInputMs) >= NETWORK_IDLE_AFTER_INPUT_MS;
   const bool visionIdle = !ui_vision_is_busy();
-  const bool answersIdle = !ui_answers_is_busy();
+  const bool answersIdle = !answersBusy;
   const bool voiceIdle = !voiceBusy;
   serviceNetworkStateMachine(displayBootState == DISPLAY_BOOT_READY &&
                              !displayRefreshPending &&

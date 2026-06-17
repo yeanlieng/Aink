@@ -42,7 +42,7 @@ Boot log should show `[Camera] ready (240x240 JPEG)` and non-zero `freePsram`.
 |------|--------|
 | Weather | QWeather forecast, metrics, AQI/UV, 3-day outlook (tomorrow onward) |
 | **AI Vision** | Camera capture + cloud poetic description (≤40 Chinese chars); eye icon on launcher |
-| **Answers** | Camera-based "Book of Answers" app with obfuscated upload and local fallback |
+| **Answers** | Local Book of Answers app with photo, voice, and automatic oracle modes |
 | Stocks | Watchlist quotes and change preview |
 | Settings | WiFi, **QWeather key/host**, AI provider/model/API key, Display, About; gear icon on launcher; EN/ZH |
 
@@ -70,10 +70,10 @@ Configure API key via captive portal or **Settings → Model**. MiMo keys often 
 
 ### Answers
 
-- Open the **Answers / 答案之书** launcher app, then press **A short press** (serial `n`) to ask.
-- The app captures a photo, converts it to a pixel-obfuscated JPEG, uploads only that obfuscated image, and asks the configured vision provider for a Book of Answers style response.
-- Responses are truncated to 20 UTF-8 characters on-device.
-- If WiFi is offline, the API key is missing, the provider/model is unavailable, image obfuscation fails, or the API request fails, the app shows a built-in random local answer instead of blocking on an error.
+- Open the **Answers / 答案之书** launcher app. Press **A short press** (serial `n`) to switch between **photo oracle**, **voice oracle**, and **automatic oracle**, then press **B** (serial `c`) to confirm.
+- Photo oracle shows a direct black/white preview and uses the captured JPEG bytes only as a local seed. It does not upload the image or call the vision provider.
+- Voice oracle records a short local microphone sample and hashes its energy pattern into a seed. Automatic oracle uses device entropy and time.
+- Results come from the built-in humorous answer list, so this app works offline and does not require an API key.
 
 ### Voice Interaction
 
@@ -110,7 +110,7 @@ With `BTN_SERIAL_SIM=1` in `btn_input.h`:
 
 | Key | Action |
 |-----|--------|
-| n | A click (next / **capture in AI Vision or Answers**) |
+| n | A click (next / **capture in AI Vision; switch or capture in Answers**) |
 | p | A double (prev) |
 | b | A long (back) |
 | c | B confirm |

@@ -11,13 +11,12 @@ void ui_answers_show(void);
 void ui_answers_leave(void);
 void ui_answers_refresh(void);
 bool ui_answers_is_active(void);
-
-bool ui_answers_request_capture(void);
-bool ui_answers_consume_capture_request(void);
-void ui_answers_set_busy(void);
-bool ui_answers_run_capture(void);
-bool ui_answers_service(UiRefreshMode *outRefreshMode);
 bool ui_answers_is_busy(void);
+
+bool ui_answers_next(UiRefreshMode *outRefreshMode);
+bool ui_answers_confirm(UiRefreshMode *outRefreshMode);
+bool ui_answers_request(void);
+bool ui_answers_service(UiRefreshMode *outRefreshMode);
 
 lv_obj_t *ui_answers_get_screen(void);
 
