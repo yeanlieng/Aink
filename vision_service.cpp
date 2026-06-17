@@ -20,7 +20,7 @@
 #define VISION_MAX_JPEG_BYTES   (64 * 1024)
 #define VISION_MAX_TOKENS       1024
 #define VISION_OUTPUT_MAX_CHARS 40
-#define VISION_BOOK_MAX_TOKENS  64
+#define VISION_BOOK_MAX_TOKENS  128
 #define VISION_BOOK_OUTPUT_MAX_CHARS 20
 #define VISION_CAMERA_FRAME_WIDTH  240
 #define VISION_CAMERA_FRAME_HEIGHT 240
@@ -83,11 +83,12 @@ static const char *describe_user_prompt(void) {
 
 static const char *book_system_prompt(void) {
   return "你是一个中文短答生成器。根据这张经过隐私混淆的照片，输出一句像签语一样的中文答案。"
-         "只输出答案本身，6到14个汉字，不要英文、不要书名、不要应用名、不要标题、不要解释、不要引号。";
+         "只输出答案本身，6到14个汉字，不要英文、不要书名、不要应用名、不要标题、不要解释、不要引号。"
+         "禁止输出思考过程、推理链或分析，直接给出最终答案。";
 }
 
 static const char *book_user_prompt(void) {
-  return "只返回一句简体中文短答。不要返回任何标题、书名、应用名或英文。";
+  return "直接输出一句简体中文短答，不要思考过程，不要解释，不要标题、书名、应用名或英文。";
 }
 
 static bool encodeBase64(const uint8_t *data, size_t dataLen, char **outB64, size_t *outLen) {
@@ -252,7 +253,9 @@ static bool looksLikeReasoningChain(const char *text) {
   if (text == nullptr || text[0] == '\0') {
     return false;
   }
-  if (strstr(text, "用户现在") != nullptr || strstr(text, "首先看") != nullptr) {
+  if (strstr(text, "用户现在") != nullptr || strstr(text, "首先看") != nullptr ||
+      strstr(text, "用户查询") != nullptr || strstr(text, "首先，") != nullptr ||
+      strstr(text, "首先,") != nullptr) {
     return true;
   }
   if (strstr(text, "不对") != nullptr && strlen(text) > 48U) {
@@ -282,6 +285,140 @@ static bool extractLastAsciiQuoted(const String &text, char *out, size_t outLen)
   }
   quoted.toCharArray(out, outLen);
   return out[0] != '\0';
+}
+
+static bool extractLastCornerQuoted(const String &text, char *out, size_t outLen) {
+  if (out == nullptr || outLen == 0) {
+    return false;
+  }
+  out[0] = '\0';
+
+  int cornerClose = -1;
+  for (int i = text.length() - 3; i >= 0; i--) {
+    if ((uint8_t)text.charAt(i) == 0xE3 && (uint8_t)text.charAt(i + 1) == 0x80 &&
+        (uint8_t)text.charAt(i + 2) == 0x8D) {
+      cornerClose = i;
+      break;
+    }
+  }
+  if (cornerClose < 3) {
+    return false;
+  }
+
+  int cornerOpen = -1;
+  for (int i = cornerClose - 3; i >= 0; i--) {
+    if ((uint8_t)text.charAt(i) == 0xE3 && (uint8_t)text.charAt(i + 1) == 0x80 &&
+        (uint8_t)text.charAt(i + 2) == 0x8C) {
+      cornerOpen = i;
+      break;
+    }
+  }
+  if (cornerOpen < 0 || cornerOpen + 3 >= cornerClose) {
+    return false;
+  }
+
+  const String quoted = text.substring(cornerOpen + 3, cornerClose);
+  if (quoted.length() == 0 || quoted.length() >= (int)outLen) {
+    return false;
+  }
+  quoted.toCharArray(out, outLen);
+  return out[0] != '\0';
+}
+
+static bool extractLastQuotedAnswer(const String &text, char *out, size_t outLen) {
+  if (extractLastCornerQuoted(text, out, outLen)) {
+    return true;
+  }
+  return extractLastAsciiQuoted(text, out, outLen);
+}
+
+static void trimVisionOutput(char *text);
+
+static size_t utf8CharLen(unsigned char c) {
+  if (c >= 0xF0) {
+    return 4;
+  }
+  if (c >= 0xE0) {
+    return 3;
+  }
+  if (c >= 0xC0) {
+    return 2;
+  }
+  return 1;
+}
+
+static bool isCjkLeadByte(unsigned char c) {
+  return c >= 0xE0 && c <= 0xEF;
+}
+
+static bool extractBestCjkPhrase(const char *text, char *out, size_t outLen, size_t minChars,
+                                 size_t maxChars) {
+  if (text == nullptr || out == nullptr || outLen == 0) {
+    return false;
+  }
+  out[0] = '\0';
+
+  const char *bestStart = nullptr;
+  size_t bestLen = 0;
+
+  for (const char *p = text; *p != '\0';) {
+    const unsigned char c = static_cast<unsigned char>(*p);
+    if (!isCjkLeadByte(c)) {
+      p += utf8CharLen(c);
+      continue;
+    }
+
+    const char *start = p;
+    size_t chars = 0;
+    while (*p != '\0') {
+      const unsigned char ch = static_cast<unsigned char>(*p);
+      if (isCjkLeadByte(ch)) {
+        const size_t step = utf8CharLen(ch);
+        if (p[step - 1] == '\0' && step > 1) {
+          break;
+        }
+        p += step;
+        chars++;
+        continue;
+      }
+      break;
+    }
+
+    const size_t byteLen = static_cast<size_t>(p - start);
+    if (chars >= minChars && chars <= maxChars && byteLen > 0 && byteLen < outLen) {
+      bestStart = start;
+      bestLen = byteLen;
+    }
+  }
+
+  if (bestStart == nullptr || bestLen == 0) {
+    return false;
+  }
+
+  memcpy(out, bestStart, bestLen);
+  out[bestLen] = '\0';
+  trimVisionOutput(out);
+  if (looksLikeReasoningChain(out)) {
+    out[0] = '\0';
+    return false;
+  }
+  return out[0] != '\0';
+}
+
+static bool extractAnswerFromText(const char *text, char *out, size_t outLen, size_t minChars,
+                                  size_t maxChars) {
+  if (text == nullptr || text[0] == '\0' || out == nullptr || outLen == 0) {
+    return false;
+  }
+  if (extractLastQuotedAnswer(String(text), out, outLen)) {
+    return true;
+  }
+  const char *finalMark = strstr(text, "最终");
+  const char *source = finalMark != nullptr ? finalMark : text;
+  if (extractLastQuotedAnswer(String(source), out, outLen)) {
+    return true;
+  }
+  return extractBestCjkPhrase(source, out, outLen, minChars, maxChars);
 }
 
 static void trimVisionOutput(char *text) {
@@ -405,17 +542,14 @@ static void normalizeVisionOutput(const char *content, const char *reasoning,
   if (content != nullptr && content[0] != '\0' && !looksLikeReasoningChain(content)) {
     snprintf(candidate, sizeof(candidate), "%s", content);
   } else if (content != nullptr && content[0] != '\0') {
-    if (!extractLastAsciiQuoted(String(content), candidate, sizeof(candidate))) {
+    if (!extractAnswerFromText(content, candidate, sizeof(candidate), 4, maxChars)) {
       snprintf(candidate, sizeof(candidate), "%s", content);
     }
   } else if (reasoning != nullptr && reasoning[0] != '\0') {
-    if (!extractLastAsciiQuoted(String(reasoning), candidate, sizeof(candidate))) {
-      const char *finalMark = strstr(reasoning, "最终");
-      const char *source = finalMark != nullptr ? finalMark : reasoning;
-      if (!extractLastAsciiQuoted(String(source), candidate, sizeof(candidate))) {
-        return;
-      }
+    if (!extractAnswerFromText(reasoning, candidate, sizeof(candidate), 4, maxChars)) {
+      return;
     }
+    Serial.println("[Vision] parse used reasoning fallback");
   }
 
   trimVisionOutput(candidate);
@@ -454,30 +588,61 @@ static bool parseProviderText(const String &body, const char *sectionKey,
     if (reasoning == nullptr) {
       reasoning = static_cast<char *>(malloc(4096));
     }
+    bool hasReasoning = false;
     if (reasoning != nullptr) {
       reasoning[0] = '\0';
-      const int idx = body.indexOf("\"choices\"");
-      const String tail = idx >= 0 ? body.substring(idx) : body;
-      if (parseJsonStringField(tail, "reasoning_content", reasoning, 4096)) {
+      const int choicesIdx = body.indexOf("\"choices\"");
+      const String choicesTail = choicesIdx >= 0 ? body.substring(choicesIdx) : body;
+      hasReasoning = parseJsonStringField(choicesTail, "reasoning_content", reasoning, 4096);
+      if (hasReasoning) {
         normalizeVisionOutput(content, reasoning, maxChars, out, outLen);
-      }
-      free(reasoning);
-      if (out[0] != '\0') {
-        return true;
+        if (out[0] != '\0') {
+          free(reasoning);
+          return true;
+        }
       }
     }
 
     char quoted[128];
-    if (content[0] != '\0' && extractLastAsciiQuoted(String(content), quoted, sizeof(quoted))) {
+    if (content[0] != '\0' && extractLastQuotedAnswer(String(content), quoted, sizeof(quoted))) {
       trimVisionOutput(quoted);
       truncateVisionOutput(quoted, maxChars);
       snprintf(out, outLen, "%s", quoted);
+      if (reasoning != nullptr) {
+        free(reasoning);
+      }
+      return out[0] != '\0';
+    }
+
+    if (content[0] != '\0' &&
+        extractAnswerFromText(content, out, outLen, 4, maxChars)) {
+      trimVisionOutput(out);
+      truncateVisionOutput(out, maxChars);
+      if (reasoning != nullptr) {
+        free(reasoning);
+      }
+      return out[0] != '\0';
+    }
+
+    if (hasReasoning && extractAnswerFromText(reasoning, out, outLen, 4, maxChars)) {
+      Serial.println("[Vision] parse used reasoning fallback");
+      trimVisionOutput(out);
+      truncateVisionOutput(out, maxChars);
+      if (reasoning != nullptr) {
+        free(reasoning);
+      }
       return out[0] != '\0';
     }
 
     if (content[0] != '\0') {
       normalizeVisionOutput(content, nullptr, maxChars, out, outLen);
+      if (reasoning != nullptr) {
+        free(reasoning);
+      }
       return out[0] != '\0';
+    }
+    if (reasoning != nullptr) {
+      free(reasoning);
     }
     return false;
   }
@@ -493,8 +658,8 @@ static bool parseProviderText(const String &body, const char *sectionKey,
 
 static bool buildOpenAiCompatibleBody(const char *model, const char *systemText, const char *userText,
                                       const char *base64Jpeg, const char *maxTokensKey,
-                                      int maxTokens, char **outBody) {
-  const size_t bodyCap = strlen(model) + strlen(systemText) + strlen(userText) + strlen(base64Jpeg) + 1024;
+                                      int maxTokens, bool disableThinking, char **outBody) {
+  const size_t bodyCap = strlen(model) + strlen(systemText) + strlen(userText) + strlen(base64Jpeg) + 1100;
   char *body = static_cast<char *>(heap_caps_malloc(bodyCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (body == nullptr) {
     body = static_cast<char *>(malloc(bodyCap));
@@ -513,6 +678,7 @@ static bool buildOpenAiCompatibleBody(const char *model, const char *systemText,
       !appendStr(body, bodyCap, &pos, maxTokensKey) ||
       !appendStr(body, bodyCap, &pos, "\":") ||
       !appendStr(body, bodyCap, &pos, tokenBuf) ||
+      (disableThinking && !appendStr(body, bodyCap, &pos, ",\"thinking\":{\"type\":\"disabled\"}")) ||
       !appendStr(body, bodyCap, &pos, ",\"messages\":[{\"role\":\"system\",\"content\":\"") ||
       !appendJsonEscaped(body, bodyCap, &pos, systemText) ||
       !appendStr(body, bodyCap, &pos, "\"},{\"role\":\"user\",\"content\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/jpeg;base64,") ||
@@ -575,8 +741,9 @@ static VisionResult requestOpenAiCompatible(AiProvider provider, const char *url
       provider == AI_PROVIDER_MIMO ? "max_completion_tokens" : "max_tokens";
 
   char *body = nullptr;
+  const bool disableThinking = provider == AI_PROVIDER_MIMO;
   if (!buildOpenAiCompatibleBody(model, systemText, userText, base64Jpeg,
-                                 maxTokensKey, maxTokens, &body)) {
+                                 maxTokensKey, maxTokens, disableThinking, &body)) {
     return VISION_RESULT_HTTP_FAIL;
   }
 
