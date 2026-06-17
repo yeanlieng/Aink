@@ -18,6 +18,5 @@ typedef enum {
 
 VisionResult vision_service_describe_camera(char *outText, size_t outLen);
 VisionResult vision_service_describe_jpeg(const uint8_t *jpeg, size_t jpegLen, char *outText, size_t outLen);
-VisionResult vision_service_book_answer_jpeg(const uint8_t *jpeg, size_t jpegLen, char *outText, size_t outLen);
 
 #endif

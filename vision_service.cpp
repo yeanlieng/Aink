@@ -9,22 +9,14 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
-#include <esp_system.h>
-#include "img_converters.h"
 #include <mbedtls/base64.h>
 #include <stdio.h>
 #include <string.h>
 
 #define VISION_HTTP_TIMEOUT_MS  60000
-#define VISION_BOOK_HTTP_TIMEOUT_MS 15000
 #define VISION_MAX_JPEG_BYTES   (64 * 1024)
 #define VISION_MAX_TOKENS       1024
 #define VISION_OUTPUT_MAX_CHARS 40
-#define VISION_BOOK_MAX_TOKENS  64
-#define VISION_BOOK_OUTPUT_MAX_CHARS 20
-#define VISION_CAMERA_FRAME_WIDTH  240
-#define VISION_CAMERA_FRAME_HEIGHT 240
-#define VISION_BOOK_OBFUSCATE_BLOCK_PX 12
 
 static bool appendChar(char *buf, size_t bufLen, size_t *pos, char c) {
   if (*pos + 1 >= bufLen) {
@@ -68,7 +60,7 @@ static bool appendJsonEscaped(char *buf, size_t bufLen, size_t *pos, const char 
   return true;
 }
 
-static const char *describe_system_prompt(void) {
+static const char *system_prompt(void) {
   if (app_locale_get() == APP_LANG_ZH) {
     return "你是墨水屏诗人。根据照片写一句中文，不超过40字，凝练有诗意。"
            "只输出这一句正文，不要思考过程、不要解释、不要引号、不要标题。";
@@ -77,17 +69,8 @@ static const char *describe_system_prompt(void) {
          "At most 40 words. Output only the final sentence, no reasoning or explanation.";
 }
 
-static const char *describe_user_prompt(void) {
+static const char *user_prompt(void) {
   return app_locale_get() == APP_LANG_ZH ? "请直接输出一句描述。" : "Reply with one sentence only.";
-}
-
-static const char *book_system_prompt(void) {
-  return "你正在模仿《答案之书》。根据这张经过隐私混淆的照片，给出一句中文短答。"
-         "不超过20个汉字，只输出答案正文，不要解释、不要标点堆叠、不要引号。";
-}
-
-static const char *book_user_prompt(void) {
-  return "Based on this image, imitate a Book of Answers response. Keep it under 20 Chinese characters.";
 }
 
 static bool encodeBase64(const uint8_t *data, size_t dataLen, char **outB64, size_t *outLen) {
@@ -122,13 +105,9 @@ static bool encodeBase64(const uint8_t *data, size_t dataLen, char **outB64, siz
 
 static bool httpPostJson(const char *url, const char *authHeader, const char *authValue,
                          const char *extraHeaderName, const char *extraHeaderValue,
-                         char *jsonBody, uint32_t timeoutMs,
-                         String *outResponse, int *outHttpCode) {
+                         char *jsonBody, String *outResponse, int *outHttpCode) {
   if (url == nullptr || jsonBody == nullptr || outResponse == nullptr || outHttpCode == nullptr) {
     return false;
-  }
-  if (timeoutMs == 0) {
-    timeoutMs = VISION_HTTP_TIMEOUT_MS;
   }
 
   const size_t bodyLen = strlen(jsonBody);
@@ -161,8 +140,8 @@ static bool httpPostJson(const char *url, const char *authHeader, const char *au
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setTimeout((int)timeoutMs);
-  client.setHandshakeTimeout(timeoutMs < 30000U ? 15 : 30);
+  client.setTimeout(VISION_HTTP_TIMEOUT_MS);
+  client.setHandshakeTimeout(30);
 
   HTTPClient http;
   if (!http.begin(client, url)) {
@@ -172,8 +151,8 @@ static bool httpPostJson(const char *url, const char *authHeader, const char *au
     return false;
   }
 
-  http.setConnectTimeout((int)(timeoutMs < 30000U ? timeoutMs : 30000U));
-  http.setTimeout((int)timeoutMs);
+  http.setConnectTimeout(30000);
+  http.setTimeout(VISION_HTTP_TIMEOUT_MS);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Connection", "close");
   if (authHeader != nullptr && authValue != nullptr && authValue[0] != '\0') {
@@ -337,8 +316,7 @@ static void truncateVisionOutput(char *text, size_t maxChars) {
   text[i] = '\0';
 }
 
-static void normalizeVisionOutput(const char *content, const char *reasoning,
-                                  size_t maxChars, char *out, size_t outLen) {
+static void normalizeVisionOutput(const char *content, const char *reasoning, char *out, size_t outLen) {
   if (out == nullptr || outLen == 0) {
     return;
   }
@@ -364,7 +342,7 @@ static void normalizeVisionOutput(const char *content, const char *reasoning,
   }
 
   trimVisionOutput(candidate);
-  truncateVisionOutput(candidate, maxChars);
+  truncateVisionOutput(candidate, VISION_OUTPUT_MAX_CHARS);
   snprintf(out, outLen, "%s", candidate);
 }
 
@@ -378,8 +356,7 @@ static bool parseVisionMessageFields(const String &body, char *contentOut, size_
   return contentOut != nullptr && parseJsonStringField(tail, "content", contentOut, contentLen);
 }
 
-static bool parseProviderText(const String &body, const char *sectionKey,
-                              size_t maxChars, char *out, size_t outLen) {
+static bool parseProviderText(const String &body, const char *sectionKey, char *out, size_t outLen) {
   const int idx = body.indexOf(sectionKey);
   const String tail = idx >= 0 ? body.substring(idx) : body;
 
@@ -389,7 +366,7 @@ static bool parseProviderText(const String &body, const char *sectionKey,
     parseVisionMessageFields(body, content, sizeof(content));
 
     if (content[0] != '\0' && !looksLikeReasoningChain(content)) {
-      normalizeVisionOutput(content, nullptr, maxChars, out, outLen);
+      normalizeVisionOutput(content, nullptr, out, outLen);
       if (out[0] != '\0') {
         return true;
       }
@@ -404,7 +381,7 @@ static bool parseProviderText(const String &body, const char *sectionKey,
       const int idx = body.indexOf("\"choices\"");
       const String tail = idx >= 0 ? body.substring(idx) : body;
       if (parseJsonStringField(tail, "reasoning_content", reasoning, 4096)) {
-        normalizeVisionOutput(content, reasoning, maxChars, out, outLen);
+        normalizeVisionOutput(content, reasoning, out, outLen);
       }
       free(reasoning);
       if (out[0] != '\0') {
@@ -415,13 +392,13 @@ static bool parseProviderText(const String &body, const char *sectionKey,
     char quoted[128];
     if (content[0] != '\0' && extractLastAsciiQuoted(String(content), quoted, sizeof(quoted))) {
       trimVisionOutput(quoted);
-      truncateVisionOutput(quoted, maxChars);
+      truncateVisionOutput(quoted, VISION_OUTPUT_MAX_CHARS);
       snprintf(out, outLen, "%s", quoted);
       return out[0] != '\0';
     }
 
     if (content[0] != '\0') {
-      normalizeVisionOutput(content, nullptr, maxChars, out, outLen);
+      normalizeVisionOutput(content, nullptr, out, outLen);
       return out[0] != '\0';
     }
     return false;
@@ -430,15 +407,14 @@ static bool parseProviderText(const String &body, const char *sectionKey,
   char raw[384];
   if (parseJsonStringField(tail, "text", raw, sizeof(raw)) ||
       parseJsonStringField(tail, "content", raw, sizeof(raw))) {
-    normalizeVisionOutput(raw, nullptr, maxChars, out, outLen);
+    normalizeVisionOutput(raw, nullptr, out, outLen);
     return out[0] != '\0';
   }
   return false;
 }
 
 static bool buildOpenAiCompatibleBody(const char *model, const char *systemText, const char *userText,
-                                      const char *base64Jpeg, const char *maxTokensKey,
-                                      int maxTokens, char **outBody) {
+                                      const char *base64Jpeg, const char *maxTokensKey, char **outBody) {
   const size_t bodyCap = strlen(model) + strlen(systemText) + strlen(userText) + strlen(base64Jpeg) + 1024;
   char *body = static_cast<char *>(heap_caps_malloc(bodyCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (body == nullptr) {
@@ -451,7 +427,7 @@ static bool buildOpenAiCompatibleBody(const char *model, const char *systemText,
   size_t pos = 0;
   body[0] = '\0';
   char tokenBuf[12];
-  snprintf(tokenBuf, sizeof(tokenBuf), "%d", maxTokens);
+  snprintf(tokenBuf, sizeof(tokenBuf), "%d", VISION_MAX_TOKENS);
   if (!appendStr(body, bodyCap, &pos, "{\"model\":\"") ||
       !appendStr(body, bodyCap, &pos, model) ||
       !appendStr(body, bodyCap, &pos, "\",\"") ||
@@ -474,7 +450,7 @@ static bool buildOpenAiCompatibleBody(const char *model, const char *systemText,
 }
 
 static bool buildGeminiBody(const char *systemText, const char *userText, const char *base64Jpeg,
-                            int maxTokens, char **outBody) {
+                            char **outBody) {
   char combined[384];
   snprintf(combined, sizeof(combined), "%s\n\n%s", systemText, userText);
 
@@ -490,7 +466,7 @@ static bool buildGeminiBody(const char *systemText, const char *userText, const 
   size_t pos = 0;
   body[0] = '\0';
   char tokenBuf[12];
-  snprintf(tokenBuf, sizeof(tokenBuf), "%d", maxTokens);
+  snprintf(tokenBuf, sizeof(tokenBuf), "%d", VISION_MAX_TOKENS);
   if (!appendStr(body, bodyCap, &pos, "{\"contents\":[{\"parts\":[{\"text\":\"") ||
       !appendJsonEscaped(body, bodyCap, &pos, combined) ||
       !appendStr(body, bodyCap, &pos, "\"},{\"inline_data\":{\"mime_type\":\"image/jpeg\",\"data\":\"") ||
@@ -507,10 +483,8 @@ static bool buildGeminiBody(const char *systemText, const char *userText, const 
 }
 
 static VisionResult requestOpenAiCompatible(AiProvider provider, const char *url, const char *apiKey,
-                                            const char *model, const char *base64Jpeg,
-                                            const char *systemText, const char *userText,
-                                            int maxTokens, size_t maxChars, uint32_t timeoutMs,
-                                            char *outText, size_t outLen) {
+                                            const char *model, const char *base64Jpeg, char *outText,
+                                            size_t outLen) {
   char bearerAuth[160];
   snprintf(bearerAuth, sizeof(bearerAuth), "Bearer %s", apiKey);
   const char *authHeader = "Authorization";
@@ -520,15 +494,13 @@ static VisionResult requestOpenAiCompatible(AiProvider provider, const char *url
       provider == AI_PROVIDER_MIMO ? "max_completion_tokens" : "max_tokens";
 
   char *body = nullptr;
-  if (!buildOpenAiCompatibleBody(model, systemText, userText, base64Jpeg,
-                                 maxTokensKey, maxTokens, &body)) {
+  if (!buildOpenAiCompatibleBody(model, system_prompt(), user_prompt(), base64Jpeg, maxTokensKey, &body)) {
     return VISION_RESULT_HTTP_FAIL;
   }
 
   String response;
   int httpCode = 0;
-  const bool posted = httpPostJson(url, authHeader, authValue, nullptr, nullptr,
-                                   body, timeoutMs, &response, &httpCode);
+  const bool posted = httpPostJson(url, authHeader, authValue, nullptr, nullptr, body, &response, &httpCode);
   free(body);
 
   if (!posted || httpCode < 200 || httpCode >= 300) {
@@ -539,16 +511,14 @@ static VisionResult requestOpenAiCompatible(AiProvider provider, const char *url
     return VISION_RESULT_HTTP_FAIL;
   }
 
-  if (!parseProviderText(response, "\"choices\"", maxChars, outText, outLen)) {
+  if (!parseProviderText(response, "\"choices\"", outText, outLen)) {
     Serial.printf("[Vision] parse fail %s\r\n", response.c_str());
     return VISION_RESULT_PARSE_FAIL;
   }
   return VISION_RESULT_OK;
 }
 
-static VisionResult requestGemini(const char *apiKey, const char *model, const char *base64Jpeg,
-                                  const char *systemText, const char *userText,
-                                  int maxTokens, size_t maxChars, uint32_t timeoutMs,
+static VisionResult requestGemini(const char *apiKey, const char *model, char *base64Jpeg,
                                   char *outText, size_t outLen) {
   char url[192];
   snprintf(url, sizeof(url),
@@ -556,14 +526,15 @@ static VisionResult requestGemini(const char *apiKey, const char *model, const c
            model, apiKey);
 
   char *body = nullptr;
-  if (!buildGeminiBody(systemText, userText, base64Jpeg, maxTokens, &body)) {
+  if (!buildGeminiBody(system_prompt(), user_prompt(), base64Jpeg, &body)) {
+    free(base64Jpeg);
     return VISION_RESULT_HTTP_FAIL;
   }
+  free(base64Jpeg);
 
   String response;
   int httpCode = 0;
-  const bool posted = httpPostJson(url, nullptr, nullptr, nullptr, nullptr,
-                                   body, timeoutMs, &response, &httpCode);
+  const bool posted = httpPostJson(url, nullptr, nullptr, nullptr, nullptr, body, &response, &httpCode);
   free(body);
 
   if (!posted || httpCode < 200 || httpCode >= 300) {
@@ -571,7 +542,7 @@ static VisionResult requestGemini(const char *apiKey, const char *model, const c
     return VISION_RESULT_HTTP_FAIL;
   }
 
-  if (!parseProviderText(response, "\"candidates\"", maxChars, outText, outLen)) {
+  if (!parseProviderText(response, "\"candidates\"", outText, outLen)) {
     Serial.printf("[Vision] Gemini parse fail %s\r\n", response.c_str());
     return VISION_RESULT_PARSE_FAIL;
   }
@@ -579,10 +550,8 @@ static VisionResult requestGemini(const char *apiKey, const char *model, const c
 }
 
 static VisionResult requestMimoCompatible(const char *apiKey, const char *model,
-                                          const char *base64Jpeg,
-                                          const char *systemText, const char *userText,
-                                          int maxTokens, size_t maxChars, uint32_t timeoutMs,
-                                          char *outText, size_t outLen) {
+                                          const char *base64Jpeg, char *outText,
+                                          size_t outLen) {
   static const char *kMimoUrls[] = {
       "https://api.xiaomimimo.com/v1/chat/completions",
       "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
@@ -596,8 +565,7 @@ static VisionResult requestMimoCompatible(const char *apiKey, const char *model,
                   (unsigned)(i + 1),
                   (unsigned)(sizeof(kMimoUrls) / sizeof(kMimoUrls[0])));
     lastResult = requestOpenAiCompatible(AI_PROVIDER_MIMO, kMimoUrls[i], apiKey,
-                                         model, base64Jpeg, systemText, userText,
-                                         maxTokens, maxChars, timeoutMs, outText, outLen);
+                                         model, base64Jpeg, outText, outLen);
     if (lastResult == VISION_RESULT_OK) {
       return VISION_RESULT_OK;
     }
@@ -608,8 +576,16 @@ static VisionResult requestMimoCompatible(const char *apiKey, const char *model,
   return lastResult;
 }
 
-static VisionResult loadConfiguredVisionProvider(AiProvider *outProvider, char *apiKey,
-                                                 size_t apiKeyLen, const char **outModel) {
+VisionResult vision_service_describe_jpeg(const uint8_t *jpeg, size_t jpegLen, char *outText, size_t outLen) {
+  if (outText == nullptr || outLen == 0) {
+    return VISION_RESULT_HTTP_FAIL;
+  }
+  outText[0] = '\0';
+
+  if (jpeg == nullptr || jpegLen == 0 || jpegLen > VISION_MAX_JPEG_BYTES) {
+    Serial.printf("[Vision] invalid jpeg len=%u\r\n", (unsigned)jpegLen);
+    return VISION_RESULT_CAPTURE_FAIL;
+  }
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[Vision] no wifi");
     return VISION_RESULT_NO_WIFI;
@@ -631,314 +607,9 @@ static VisionResult loadConfiguredVisionProvider(AiProvider *outProvider, char *
     return VISION_RESULT_UNSUPPORTED;
   }
 
-  if (apiKey != nullptr && apiKeyLen > 0) {
-    settings_api_get_api_key(apiKey, apiKeyLen);
-  }
-  if (outProvider != nullptr) {
-    *outProvider = provider;
-  }
-  if (outModel != nullptr) {
-    *outModel = settings_api_get_model_id();
-  }
-  return VISION_RESULT_OK;
-}
-
-static VisionResult requestConfiguredVision(AiProvider provider, const char *apiKey,
-                                            const char *model, const char *base64Jpeg,
-                                            const char *systemText, const char *userText,
-                                            int maxTokens, size_t maxChars, uint32_t timeoutMs,
-                                            char *outText, size_t outLen) {
-  if (provider == AI_PROVIDER_GEMINI) {
-    return requestGemini(apiKey, model, base64Jpeg, systemText, userText,
-                         maxTokens, maxChars, timeoutMs, outText, outLen);
-  }
-  if (provider == AI_PROVIDER_MIMO) {
-    return requestMimoCompatible(apiKey, model, base64Jpeg, systemText, userText,
-                                 maxTokens, maxChars, timeoutMs, outText, outLen);
-  }
-
-  const char *url = ai_provider_chat_completions_url(provider);
-  if (url == nullptr || url[0] == '\0') {
-    return VISION_RESULT_UNSUPPORTED;
-  }
-  return requestOpenAiCompatible(provider, url, apiKey, model, base64Jpeg,
-                                 systemText, userText, maxTokens, maxChars, timeoutMs,
-                                 outText, outLen);
-}
-
-static void chooseBookFallbackAnswer(char *outText, size_t outLen) {
-  static const char *kAnswers[] = {
-      "可以一试",
-      "先等等看",
-      "答案在路上",
-      "别急，会好的",
-      "换个方向",
-      "现在就开始",
-      "顺其自然",
-      "今天适合勇敢",
-      "再问一次心",
-      "保持好奇",
-      "会有惊喜",
-      "少想多做",
-      "听听直觉",
-      "风会带路",
-      "答案是肯定",
-      "暂时不是",
-      "慢慢来",
-      "去见重要的人",
-      "保留一点神秘",
-      "机会正在靠近",
-      "再靠近一点",
-      "先把灯打开",
-      "可以放心",
-      "不如暂停",
-      "选更简单的路",
-      "先睡一觉",
-      "明天会更清楚",
-      "你已经知道答案",
-      "向左看",
-      "向右试",
-      "别把门关死",
-      "留给时间",
-      "先说出口",
-      "不要逞强",
-      "是时候告别",
-      "先保护自己",
-      "值得等待",
-      "别等太久",
-      "现在还早",
-      "时机刚好",
-      "让它自然发生",
-      "去问那个人",
-      "别问所有人",
-      "相信第一次感觉",
-      "需要更诚实",
-      "答案藏在细节",
-      "先整理桌面",
-      "从小处开始",
-      "今天不宜冒进",
-      "可以大胆一点",
-      "退一步更好",
-      "往前一步",
-      "别回头太久",
-      "事情会转弯",
-      "它没有那么坏",
-      "你会被接住",
-      "再等等消息",
-      "主动会有回声",
-      "沉默也是答案",
-      "不必解释太多",
-      "先把水喝完",
-      "心软不是错",
-      "该拒绝就拒绝",
-      "可以答应",
-      "别急着答应",
-      "先看看代价",
-      "这次选自己",
-      "给它一个名字",
-      "放下旧问题",
-      "新答案在路上",
-      "不要低估自己",
-      "别把梦改小",
-      "今天适合开始",
-      "今天适合收尾",
-      "先完成一件事",
-      "问题会变轻",
-      "有人正在靠近",
-      "你需要休息",
-      "把话说清楚",
-      "别猜，去确认",
-      "再试一次",
-      "换个方式试",
-      "现在不是终点",
-      "允许它失败",
-      "它会自己打开",
-      "别急着证明",
-      "先守住边界",
-      "真相很温柔",
-      "真相有点刺",
-      "笑一下再决定",
-      "今天适合沉默",
-      "今天适合表达",
-      "跟着光走",
-      "离噪音远点",
-      "小心那个承诺",
-      "接受这个邀请",
-      "拒绝也可以",
-      "先别下结论",
-      "答案正在发芽",
-      "你没有错过",
-      "错过也没关系",
-      "别把爱当答案",
-      "钱会说明一部分",
-      "身体已经知道",
-      "不要再拖延",
-      "可以慢慢相信",
-      "这不是偶然",
-      "先把门留着",
-      "它值得认真",
-      "它不值得耗尽",
-      "去做那件小事",
-      "别让恐惧开车",
-      "会有人帮你",
-      "先独自走一段",
-      "等风停再说",
-      "趁风起出发",
-      "别忘了快乐",
-      "答案很朴素",
-      "复杂的先放下",
-      "先照顾心情",
-      "这是好兆头",
-      "还差一点勇气",
-      "你已经准备好",
-      "还需要证据",
-      "别急着删除",
-      "该更新计划了",
-      "问题不在你",
-      "问题需要时间",
-      "可以重新选择",
-      "别怕重新开始",
-      "先把窗打开",
-      "遇见会迟到",
-      "好事会变慢",
-      "这条路有人走过",
-      "答案在你手里",
-  };
-
-  if (outText == nullptr || outLen == 0) {
-    return;
-  }
-  const size_t count = sizeof(kAnswers) / sizeof(kAnswers[0]);
-  const size_t index = count > 0 ? (size_t)(esp_random() % count) : 0;
-  snprintf(outText, outLen, "%s", kAnswers[index]);
-}
-
-static uint8_t clampByte(int value) {
-  if (value < 0) {
-    return 0;
-  }
-  if (value > 255) {
-    return 255;
-  }
-  return (uint8_t)value;
-}
-
-static uint32_t mixObfuscationSeed(uint32_t seed, uint32_t value) {
-  seed ^= value + 0x9E3779B9u + (seed << 6) + (seed >> 2);
-  return seed;
-}
-
-static bool obfuscateJpegForBook(const uint8_t *jpeg, size_t jpegLen,
-                                 uint8_t **outJpeg, size_t *outLen) {
-  if (jpeg == nullptr || outJpeg == nullptr || outLen == nullptr) {
-    return false;
-  }
-  *outJpeg = nullptr;
-  *outLen = 0;
-
-  const size_t rgbSize = (size_t)VISION_CAMERA_FRAME_WIDTH *
-                         (size_t)VISION_CAMERA_FRAME_HEIGHT * 3U;
-  uint8_t *rgb = static_cast<uint8_t *>(heap_caps_malloc(rgbSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (rgb == nullptr) {
-    rgb = static_cast<uint8_t *>(malloc(rgbSize));
-  }
-  if (rgb == nullptr) {
-    Serial.println("[Vision] book obfuscation rgb alloc failed");
-    return false;
-  }
-
-  if (!fmt2rgb888(jpeg, jpegLen, PIXFORMAT_JPEG, rgb)) {
-    Serial.println("[Vision] book obfuscation jpeg decode failed");
-    free(rgb);
-    return false;
-  }
-
-  uint32_t seed = mixObfuscationSeed(0xA17B00A5u, (uint32_t)jpegLen);
-  for (size_t i = 0; i < jpegLen; i += 257U) {
-    seed = mixObfuscationSeed(seed, jpeg[i]);
-  }
-
-  for (int by = 0; by < VISION_CAMERA_FRAME_HEIGHT; by += VISION_BOOK_OBFUSCATE_BLOCK_PX) {
-    for (int bx = 0; bx < VISION_CAMERA_FRAME_WIDTH; bx += VISION_BOOK_OBFUSCATE_BLOCK_PX) {
-      uint32_t rSum = 0;
-      uint32_t gSum = 0;
-      uint32_t bSum = 0;
-      uint32_t count = 0;
-      const int yEnd = min(by + VISION_BOOK_OBFUSCATE_BLOCK_PX, VISION_CAMERA_FRAME_HEIGHT);
-      const int xEnd = min(bx + VISION_BOOK_OBFUSCATE_BLOCK_PX, VISION_CAMERA_FRAME_WIDTH);
-
-      for (int y = by; y < yEnd; y++) {
-        for (int x = bx; x < xEnd; x++) {
-          const size_t idx = ((size_t)y * VISION_CAMERA_FRAME_WIDTH + (size_t)x) * 3U;
-          rSum += rgb[idx];
-          gSum += rgb[idx + 1];
-          bSum += rgb[idx + 2];
-          count++;
-        }
-      }
-
-      if (count == 0) {
-        continue;
-      }
-
-      seed = mixObfuscationSeed(seed, ((uint32_t)bx << 16) | (uint32_t)by);
-      const int jitter = (int)(seed & 0x1FU) - 16;
-      const int avgR = (int)(rSum / count);
-      const int avgG = (int)(gSum / count);
-      const int avgB = (int)(bSum / count);
-      int luma = (77 * avgR + 150 * avgG + 29 * avgB) >> 8;
-      luma = (luma & 0xE0) + jitter;
-      const uint8_t shade = clampByte(luma);
-
-      for (int y = by; y < yEnd; y++) {
-        for (int x = bx; x < xEnd; x++) {
-          const size_t idx = ((size_t)y * VISION_CAMERA_FRAME_WIDTH + (size_t)x) * 3U;
-          rgb[idx] = shade;
-          rgb[idx + 1] = shade;
-          rgb[idx + 2] = shade;
-        }
-      }
-    }
-  }
-
-  uint8_t *encoded = nullptr;
-  size_t encodedLen = 0;
-  const bool ok = fmt2jpg(rgb, rgbSize,
-                          VISION_CAMERA_FRAME_WIDTH, VISION_CAMERA_FRAME_HEIGHT,
-                          PIXFORMAT_RGB888, 24, &encoded, &encodedLen);
-  free(rgb);
-
-  if (!ok || encoded == nullptr || encodedLen == 0 || encodedLen > VISION_MAX_JPEG_BYTES) {
-    free(encoded);
-    Serial.printf("[Vision] book obfuscation encode failed len=%u\r\n", (unsigned)encodedLen);
-    return false;
-  }
-
-  *outJpeg = encoded;
-  *outLen = encodedLen;
-  Serial.printf("[Vision] book obfuscated JPEG %u -> %u bytes\r\n",
-                (unsigned)jpegLen, (unsigned)encodedLen);
-  return true;
-}
-
-VisionResult vision_service_describe_jpeg(const uint8_t *jpeg, size_t jpegLen, char *outText, size_t outLen) {
-  if (outText == nullptr || outLen == 0) {
-    return VISION_RESULT_HTTP_FAIL;
-  }
-  outText[0] = '\0';
-
-  if (jpeg == nullptr || jpegLen == 0 || jpegLen > VISION_MAX_JPEG_BYTES) {
-    Serial.printf("[Vision] invalid jpeg len=%u\r\n", (unsigned)jpegLen);
-    return VISION_RESULT_CAPTURE_FAIL;
-  }
-
   char apiKey[129];
-  const char *model = nullptr;
-  AiProvider provider = AI_PROVIDER_OPENAI;
-  VisionResult ready = loadConfiguredVisionProvider(&provider, apiKey, sizeof(apiKey), &model);
-  if (ready != VISION_RESULT_OK) {
-    return ready;
-  }
+  settings_api_get_api_key(apiKey, sizeof(apiKey));
+  const char *model = settings_api_get_model_id();
 
   Serial.printf("[Vision] JPEG %u bytes, encoding b64...\r\n", (unsigned)jpegLen);
   Serial.flush();
@@ -955,11 +626,19 @@ VisionResult vision_service_describe_jpeg(const uint8_t *jpeg, size_t jpegLen, c
   Serial.flush();
 
   VisionResult result = VISION_RESULT_HTTP_FAIL;
-  result = requestConfiguredVision(provider, apiKey, model, base64,
-                                   describe_system_prompt(), describe_user_prompt(),
-                                   VISION_MAX_TOKENS, VISION_OUTPUT_MAX_CHARS,
-                                   VISION_HTTP_TIMEOUT_MS,
-                                   outText, outLen);
+  if (provider == AI_PROVIDER_GEMINI) {
+    result = requestGemini(apiKey, model, base64, outText, outLen);
+    base64 = nullptr;
+  } else if (provider == AI_PROVIDER_MIMO) {
+    result = requestMimoCompatible(apiKey, model, base64, outText, outLen);
+  } else {
+    const char *url = ai_provider_chat_completions_url(provider);
+    if (url == nullptr || url[0] == '\0') {
+      free(base64);
+      return VISION_RESULT_UNSUPPORTED;
+    }
+    result = requestOpenAiCompatible(provider, url, apiKey, model, base64, outText, outLen);
+  }
   free(base64);
 
   if (result == VISION_RESULT_OK) {
@@ -967,70 +646,6 @@ VisionResult vision_service_describe_jpeg(const uint8_t *jpeg, size_t jpegLen, c
   }
 
   return result;
-}
-
-VisionResult vision_service_book_answer_jpeg(const uint8_t *jpeg, size_t jpegLen,
-                                             char *outText, size_t outLen) {
-  if (outText == nullptr || outLen == 0) {
-    return VISION_RESULT_HTTP_FAIL;
-  }
-  outText[0] = '\0';
-
-  if (jpeg == nullptr || jpegLen == 0 || jpegLen > VISION_MAX_JPEG_BYTES) {
-    Serial.printf("[Vision] book invalid jpeg len=%u, using local answer\r\n", (unsigned)jpegLen);
-    chooseBookFallbackAnswer(outText, outLen);
-    return VISION_RESULT_OK;
-  }
-
-  char apiKey[129];
-  const char *model = nullptr;
-  AiProvider provider = AI_PROVIDER_OPENAI;
-  VisionResult ready = loadConfiguredVisionProvider(&provider, apiKey, sizeof(apiKey), &model);
-  if (ready != VISION_RESULT_OK) {
-    Serial.printf("[Vision] book provider unavailable (%d), using local answer\r\n", (int)ready);
-    chooseBookFallbackAnswer(outText, outLen);
-    return VISION_RESULT_OK;
-  }
-
-  uint8_t *obfuscated = nullptr;
-  size_t obfuscatedLen = 0;
-  if (!obfuscateJpegForBook(jpeg, jpegLen, &obfuscated, &obfuscatedLen)) {
-    Serial.println("[Vision] book obfuscation failed, using local answer");
-    chooseBookFallbackAnswer(outText, outLen);
-    return VISION_RESULT_OK;
-  }
-
-  char *base64 = nullptr;
-  size_t base64Len = 0;
-  if (!encodeBase64(obfuscated, obfuscatedLen, &base64, &base64Len)) {
-    free(obfuscated);
-    Serial.println("[Vision] book base64 encode failed, using local answer");
-    chooseBookFallbackAnswer(outText, outLen);
-    return VISION_RESULT_OK;
-  }
-  free(obfuscated);
-
-  Serial.printf("[Vision] book b64 %u bytes, provider=%s model=%s, posting...\r\n",
-                (unsigned)base64Len, ai_provider_name(provider), model);
-  Serial.flush();
-
-  const VisionResult result = requestConfiguredVision(provider, apiKey, model, base64,
-                                                     book_system_prompt(), book_user_prompt(),
-                                                     VISION_BOOK_MAX_TOKENS,
-                                                     VISION_BOOK_OUTPUT_MAX_CHARS,
-                                                     VISION_BOOK_HTTP_TIMEOUT_MS,
-                                                     outText, outLen);
-  free(base64);
-
-  if (result != VISION_RESULT_OK || outText[0] == '\0') {
-    Serial.printf("[Vision] book request failed (%d), using local answer\r\n", (int)result);
-    chooseBookFallbackAnswer(outText, outLen);
-    return VISION_RESULT_OK;
-  }
-
-  truncateVisionOutput(outText, VISION_BOOK_OUTPUT_MAX_CHARS);
-  Serial.printf("[Vision] book answer %s\r\n", outText);
-  return VISION_RESULT_OK;
 }
 
 VisionResult vision_service_describe_camera(char *outText, size_t outLen) {
@@ -1046,14 +661,30 @@ VisionResult vision_service_describe_camera(char *outText, size_t outLen) {
     Serial.println("[Vision] no camera");
     return VISION_RESULT_NO_CAMERA;
   }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Vision] no wifi");
+    return VISION_RESULT_NO_WIFI;
+  }
+  if (!settings_api_has_api_key()) {
+    Serial.println("[Vision] no api key");
+    return VISION_RESULT_NO_API;
+  }
+
+  const AiProvider provider = settings_api_get_provider();
+  if (!ai_provider_supports_vision(provider)) {
+    Serial.printf("[Vision] provider unsupported: %s\r\n", ai_provider_name(provider));
+    return VISION_RESULT_UNSUPPORTED;
+  }
+
+  const int modelIndex = settings_api_get_model_index();
+  if (!ai_provider_model_supports_vision(provider, modelIndex)) {
+    Serial.printf("[Vision] model unsupported for vision: %s\r\n", settings_api_get_model_id());
+    return VISION_RESULT_UNSUPPORTED;
+  }
 
   char apiKey[129];
-  const char *model = nullptr;
-  AiProvider provider = AI_PROVIDER_OPENAI;
-  VisionResult ready = loadConfiguredVisionProvider(&provider, apiKey, sizeof(apiKey), &model);
-  if (ready != VISION_RESULT_OK) {
-    return ready;
-  }
+  settings_api_get_api_key(apiKey, sizeof(apiKey));
+  const char *model = settings_api_get_model_id();
 
   Serial.println("[Vision] capturing frame...");
   Serial.flush();
@@ -1092,11 +723,19 @@ VisionResult vision_service_describe_camera(char *outText, size_t outLen) {
   Serial.flush();
 
   VisionResult result = VISION_RESULT_HTTP_FAIL;
-  result = requestConfiguredVision(provider, apiKey, model, base64,
-                                   describe_system_prompt(), describe_user_prompt(),
-                                   VISION_MAX_TOKENS, VISION_OUTPUT_MAX_CHARS,
-                                   VISION_HTTP_TIMEOUT_MS,
-                                   outText, outLen);
+  if (provider == AI_PROVIDER_GEMINI) {
+    result = requestGemini(apiKey, model, base64, outText, outLen);
+    base64 = nullptr;
+  } else if (provider == AI_PROVIDER_MIMO) {
+    result = requestMimoCompatible(apiKey, model, base64, outText, outLen);
+  } else {
+    const char *url = ai_provider_chat_completions_url(provider);
+    if (url == nullptr || url[0] == '\0') {
+      free(base64);
+      return VISION_RESULT_UNSUPPORTED;
+    }
+    result = requestOpenAiCompatible(provider, url, apiKey, model, base64, outText, outLen);
+  }
   free(base64);
 
   if (result == VISION_RESULT_OK) {
