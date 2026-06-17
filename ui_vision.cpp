@@ -207,6 +207,16 @@ static bool preview_capture_allowed(void) {
   return allowed;
 }
 
+static bool ensure_preview_camera_ready(void) {
+  if (!camera_service_lock(500)) {
+    Serial.println("[Vision] preview camera busy");
+    return false;
+  }
+  const bool ready = camera_service_start_preview();
+  camera_service_unlock();
+  return ready;
+}
+
 static void set_waiting_text(uint8_t dots) {
   char text[48];
   build_waiting_text(text, sizeof(text), dots);
@@ -241,7 +251,9 @@ static void vision_preview_task(void *param) {
     }
 
     bool ok = false;
-    if (preview_capture_allowed() && (camera_service_is_ready() || camera_service_init())) {
+    if (preview_capture_allowed() &&
+        camera_service_is_ready() &&
+        camera_service_mode() == CAMERA_SERVICE_MODE_PREVIEW) {
       camera_fb_t *fb = camera_service_capture();
       if (fb != nullptr) {
         ok = camera_service_frame_to_mono_preview100(fb, bits, sizeof(bits));
@@ -249,7 +261,6 @@ static void vision_preview_task(void *param) {
       }
     }
 
-    camera_service_pause();
     camera_service_unlock();
 
     if (ok) {
@@ -295,7 +306,7 @@ static VisionResult capture_frame_for_ai(uint8_t **outJpeg, size_t *outLen) {
   uint8_t previewBits[CAMERA_PREVIEW_BYTES];
   bool previewOk = false;
 
-  if (!camera_service_is_ready() && !camera_service_init()) {
+  if (!camera_service_start_photo()) {
     status = VISION_RESULT_NO_CAMERA;
   } else {
     fb = camera_service_capture();
@@ -433,7 +444,7 @@ void ui_vision_show(void) {
     lv_label_set_text(s_titleLabel, app_tr(TR_VISION_TITLE));
     set_waiting_text(s_waitAnimDots);
   } else {
-    set_preview_state(true, false);
+    set_preview_state(ensure_preview_camera_ready(), false);
     show_idle();
   }
   lv_scr_load(s_screenVision);
@@ -493,10 +504,6 @@ bool ui_vision_consume_capture_request(void) {
 void ui_vision_set_busy(void) {
   s_busy = true;
   set_preview_state(true, true);
-  if (camera_service_lock(300)) {
-    camera_service_pause();
-    camera_service_unlock();
-  }
   s_waitAnimDots = 1;
   s_waitAnimLastMs = millis();
   lv_label_set_text(s_titleLabel, app_tr(TR_VISION_TITLE));
@@ -518,7 +525,7 @@ bool ui_vision_run_capture(void) {
   if (prep != VISION_RESULT_OK) {
     free(jpeg);
     s_busy = false;
-    set_preview_state(ui_vision_is_active(), false);
+    set_preview_state(ui_vision_is_active() && ensure_preview_camera_ready(), false);
     lv_label_set_text(s_hintLabel, app_tr(TR_VISION_HINT));
     lv_label_set_text(s_bodyLabel, vision_error_text(prep));
     lv_obj_invalidate(s_screenVision);
@@ -549,7 +556,7 @@ bool ui_vision_run_capture(void) {
 
     free(staleJpeg);
     s_busy = false;
-    set_preview_state(ui_vision_is_active(), false);
+    set_preview_state(ui_vision_is_active() && ensure_preview_camera_ready(), false);
     lv_label_set_text(s_hintLabel, app_tr(TR_VISION_HINT));
     lv_label_set_text(s_bodyLabel, app_tr(TR_VISION_FAIL));
     lv_obj_invalidate(s_screenVision);
@@ -610,7 +617,7 @@ bool ui_vision_service(UiRefreshMode *outRefreshMode) {
       return false;
     }
     if (outRefreshMode != nullptr) {
-      *outRefreshMode = UI_REFRESH_FAST;
+      *outRefreshMode = UI_REFRESH_PREVIEW;
     }
     return true;
   }

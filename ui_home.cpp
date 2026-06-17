@@ -137,7 +137,7 @@ static void bind_vision_slot(int slot) {
 }
 
 static void bind_book_slot(int slot) {
-  canvas_set_bitmap_icon(s_iconCanvas[slot], vision_eye_bitmap);
+  canvas_set_bitmap_icon(s_iconCanvas[slot], answerbook_bitmap);
   lv_label_set_text(s_subLabels[slot], app_tr(TR_BOOK_HINT));
 }
 

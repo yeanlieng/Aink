@@ -235,6 +235,9 @@ bool ui_nav_handle(BtnAction action, UiRefreshMode *outRefreshMode) {
         go_home(outRefreshMode);
         return true;
       case BTN_ACTION_VOICE_TOGGLE:
+        if (ui_answers_is_busy()) {
+          return false;
+        }
         return open_voice_interaction(outRefreshMode);
       default:
         return false;
@@ -244,17 +247,30 @@ bool ui_nav_handle(BtnAction action, UiRefreshMode *outRefreshMode) {
   if (ui_answers_is_active()) {
     switch (action) {
       case BTN_ACTION_NEXT:
+      {
         if (ui_vision_is_busy()) {
           return false;
         }
-        if (ui_answers_request_capture()) {
-          ui_answers_set_busy();
+        UiRefreshMode answerMode = UI_REFRESH_NONE;
+        if (ui_answers_next(&answerMode)) {
           if (outRefreshMode != nullptr) {
-            *outRefreshMode = UI_REFRESH_NAV;
+            *outRefreshMode = answerMode;
           }
           return true;
         }
         return false;
+      }
+      case BTN_ACTION_CONFIRM:
+      {
+        UiRefreshMode answerMode = UI_REFRESH_NONE;
+        if (ui_answers_confirm(&answerMode)) {
+          if (outRefreshMode != nullptr) {
+            *outRefreshMode = answerMode;
+          }
+          return true;
+        }
+        return false;
+      }
       case BTN_ACTION_BACK:
         go_home(outRefreshMode);
         return true;
