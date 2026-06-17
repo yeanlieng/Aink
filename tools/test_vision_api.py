@@ -72,10 +72,10 @@ def load_image_base64(path: Path) -> tuple[str, str]:
     return mime, b64
 
 
-def build_body(model: str, max_tokens_key: str, mime: str, b64: str) -> dict:
+def build_body(model: str, max_tokens_key: str, mime: str, b64: str, provider: str) -> dict:
     """Same structure as vision_service.cpp buildOpenAiCompatibleBody."""
     image_url = f"data:{mime};base64,{b64}"
-    return {
+    body: dict = {
         "model": model,
         max_tokens_key: VISION_MAX_TOKENS,
         "messages": [
@@ -89,21 +89,24 @@ def build_body(model: str, max_tokens_key: str, mime: str, b64: str) -> dict:
             },
         ],
     }
+    if provider == "mimo":
+        body["thinking"] = {"type": "disabled"}
+    return body
 
 
 def looks_like_reasoning_chain(text: str) -> bool:
     if not text:
         return False
-    if "用户现在" in text or "首先看" in text:
+    if any(marker in text for marker in ("用户现在", "首先看", "用户查询", "首先，", "首先,")):
         return True
     return "不对" in text and len(text) > 48
 
 
 def extract_last_quoted(text: str) -> str:
-    matches = re.findall(r'"([^"\n]{4,80})"', text)
+    matches = re.findall(r"[「]([^」\n]{4,80})[」]", text)
     if matches:
         return matches[-1].strip()
-    matches = re.findall(r"[「]([^」\n]{4,80})[」]", text)
+    matches = re.findall(r'"([^"\n]{4,80})"', text)
     if matches:
         return matches[-1].strip()
     return ""
@@ -187,7 +190,7 @@ def main() -> int:
 
     model = args.model or preset["default_model"]
     mime, b64 = load_image_base64(args.image)
-    body = build_body(model, preset["max_tokens_key"], mime, b64)
+    body = build_body(model, preset["max_tokens_key"], mime, b64, args.provider)
     payload = json.dumps(body, ensure_ascii=False)
     print(f"provider={args.provider} model={model}")
     print(f"image={args.image} bytes={args.image.stat().st_size} b64_len={len(b64)} json_bytes={len(payload.encode('utf-8'))}")

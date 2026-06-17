@@ -243,6 +243,27 @@ void ui_home_prev_focus(int *outPrevFocus) {
   }
 }
 
+void ui_home_reset_focus(void) {
+  const int prev = s_logicalFocus;
+  const int prevPage = s_homePage;
+  if (prev == 0 && prevPage == 0) {
+    return;
+  }
+
+  s_logicalFocus = 0;
+  s_homePage = 0;
+  sync_home_page();
+
+  if (prevPage == s_homePage) {
+    if (prev != s_logicalFocus) {
+      lv_obj_invalidate(s_tiles[prev % HOME_SLOTS_PER_PAGE]);
+    }
+    invalidate_focus_tile();
+  } else {
+    lv_obj_invalidate(s_screenHome);
+  }
+}
+
 void ui_home_init(void) {
   s_screenHome = lv_obj_create(nullptr);
   lv_obj_set_size(s_screenHome, 200, 180);

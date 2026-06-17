@@ -952,8 +952,8 @@ static bool transcribeMimo(uint8_t *wav, size_t wavLen, char *out, size_t outLen
 static bool buildChatBody(AiProvider provider, const char *model, const char *transcript, char **outBody) {
   const char *systemText =
       app_locale_get() == APP_LANG_ZH
-          ? "你是一个小型墨水屏语音助手。用简短自然的中文回答，最多80字。"
-          : "You are a compact e-paper voice assistant. Answer naturally in at most 80 words.";
+          ? "你是一个小型墨水屏语音助手。用简短自然的中文回答，最多40字，不要带任何表情。"
+          : "You are a compact e-paper voice assistant. Answer naturally in at most 40 words, no emojis.";
   const char *prefix =
       app_locale_get() == APP_LANG_ZH
           ? "用户语音转写如下，请直接回答："

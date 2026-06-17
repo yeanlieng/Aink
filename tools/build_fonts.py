@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate aink_3500_12.c / aink_3500_14.c via npx lv_font_conv."""
+"""Regenerate aink_3500_12.c via npx lv_font_conv."""
 
 from __future__ import annotations
 
@@ -82,15 +82,16 @@ def patch_lvgl_include(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     if BROKEN_INCLUDE in text:
         text = text.replace(BROKEN_INCLUDE, LVGL_INCLUDE_BLOCK, 1)
-        path.write_text(text, encoding="utf-8", newline="\n")
+    # LVGL 9 lv_font_conv emits .static_bitmap; project uses LVGL 8.3.
+    text = re.sub(r"\n\s*\.static_bitmap = 0,\n", "\n", text)
+    path.write_text(text, encoding="utf-8", newline="\n")
 
 
 def main() -> None:
     if not FONT_PATH.is_file():
         raise SystemExit(f"Missing font: {FONT_PATH}")
     symbols = read_symbols()
-    for size in (12, 14):
-        build(size, symbols)
+    build(12, symbols)
     print("Done.")
 
 

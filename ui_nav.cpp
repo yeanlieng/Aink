@@ -141,6 +141,13 @@ bool ui_nav_handle(BtnAction action, UiRefreshMode *outRefreshMode) {
         }
         return true;
       case BTN_ACTION_BACK:
+        if (ui_home_get_focus() != 0) {
+          ui_home_reset_focus();
+          if (outRefreshMode != nullptr) {
+            *outRefreshMode = UI_REFRESH_FAST;
+          }
+          return true;
+        }
         return false;
       case BTN_ACTION_VOICE_TOGGLE:
         return open_voice_interaction(outRefreshMode);
