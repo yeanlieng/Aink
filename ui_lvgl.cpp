@@ -11,7 +11,7 @@
 #include <lvgl.h>
 
 #define UI_MAIN_WIDTH   EPD_1IN54_V2_WIDTH
-#define UI_MAIN_HEIGHT  EPAPER_MAIN_HEIGHT
+#define UI_MAIN_HEIGHT  EPD_1IN54_V2_HEIGHT
 #define UI_DRAW_BUF_PIXELS (UI_MAIN_WIDTH * UI_MAIN_HEIGHT)
 
 static lv_disp_draw_buf_t s_drawBuf;
@@ -38,7 +38,7 @@ static void lvgl_flush_cb(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_col
   for (int32_t y = area->y1; y <= area->y2; y++) {
     for (int32_t x = area->x1; x <= area->x2; x++) {
       const bool black = lvgl_pixel_is_black(*color_p);
-      epaper_set_pixel((UWORD)x, (UWORD)(y + EPAPER_STATUS_BAR_HEIGHT), black);
+      epaper_set_pixel((UWORD)x, (UWORD)y, black);
       if (black) {
         s_flushBlackPixels++;
       }
@@ -78,6 +78,20 @@ void ui_lvgl_init(void) {
   s_lastTickMs = millis();
   Serial.printf("[LVGL] init depth=%d disp=%p buf=%u px\n",
                 (int)LV_COLOR_DEPTH, (void *)s_display, (unsigned)UI_DRAW_BUF_PIXELS);
+}
+
+void ui_lvgl_configure_screen(lv_obj_t *screen) {
+  if (screen == nullptr) {
+    return;
+  }
+  lv_obj_set_size(screen, EPD_1IN54_V2_WIDTH, EPD_1IN54_V2_HEIGHT);
+  lv_obj_set_style_bg_color(screen, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(screen, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(screen, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(screen, EPAPER_STATUS_BAR_HEIGHT, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(screen, 0, LV_PART_MAIN);
+  lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 }
 
 void ui_lvgl_tick(void) {

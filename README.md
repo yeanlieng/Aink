@@ -104,6 +104,21 @@ The microphone uses the Sense expansion board PDM pins: GPIO42 clock and GPIO41 
 
 First boot without saved WiFi enters AP portal mode automatically.
 
+### Boot splash
+
+Normal startup shows a 200×200 monochrome splash image with an asynchronous full
+e-paper refresh, then continues initializing services while the panel is busy.
+To replace the built-in fallback splash, generate `boot_splash_image.h` from a
+200×200 black/white BMP and keep it in the sketch root:
+
+```powershell
+python tools/bmp_to_boot_splash.py path\to\splash.bmp --out boot_splash_image.h
+```
+
+The generated header is compiled into flash and is decoded at boot. If the
+header is absent or invalid, firmware falls back to a simple built-in Aink
+splash.
+
 ### Serial button simulation
 
 With `BTN_SERIAL_SIM=1` in `btn_input.h`:

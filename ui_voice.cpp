@@ -2,6 +2,7 @@
 
 #include "app_locale.h"
 #include "ui_fonts.h"
+#include "ui_lvgl.h"
 #include "voice_service.h"
 
 #include <Arduino.h>
@@ -25,7 +26,7 @@ static const char *voice_title(void) {
 
 void ui_voice_init(void) {
   s_screenVoice = lv_obj_create(nullptr);
-  lv_obj_set_size(s_screenVoice, 200, 180);
+  ui_lvgl_configure_screen(s_screenVoice);
   lv_obj_set_style_bg_color(s_screenVoice, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_screenVoice, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_screenVoice, LV_OBJ_FLAG_SCROLLABLE);

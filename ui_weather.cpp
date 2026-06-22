@@ -5,6 +5,7 @@
 #include "weather_service.h"
 #include "app_locale.h"
 #include "ui_fonts.h"
+#include "ui_lvgl.h"
 
 #include <Arduino.h>
 #include <stdio.h>
@@ -235,7 +236,7 @@ static lv_obj_t *create_metric_row(lv_obj_t *parent, int index, lv_coord_t x, lv
 
 void ui_weather_init(void) {
   s_screenWeather = lv_obj_create(nullptr);
-  lv_obj_set_size(s_screenWeather, 200, 180);
+  ui_lvgl_configure_screen(s_screenWeather);
   lv_obj_set_style_bg_color(s_screenWeather, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_screenWeather, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_screenWeather, LV_OBJ_FLAG_SCROLLABLE);

@@ -4,6 +4,7 @@
 #include "settings_api.h"
 #include "ui_fonts.h"
 #include "ui_home.h"
+#include "ui_lvgl.h"
 
 #include <Arduino.h>
 #include <stdio.h>
@@ -52,7 +53,7 @@ static void update_clock_view(const struct tm *timeinfo) {
 
 void ui_clock_init(void) {
   s_screenClock = lv_obj_create(nullptr);
-  lv_obj_set_size(s_screenClock, 200, 180);
+  ui_lvgl_configure_screen(s_screenClock);
   lv_obj_set_style_bg_color(s_screenClock, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_screenClock, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_screenClock, LV_OBJ_FLAG_SCROLLABLE);

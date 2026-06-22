@@ -8,6 +8,7 @@
 #include "weather_icons.h"
 #include "weather_service.h"
 #include "stock_service.h"
+#include "boot_splash.h"
 #include "epaper_canvas.h"
 #include "btn_input.h"
 #include "ui_lvgl.h"
@@ -20,6 +21,7 @@
 #include "ui_vision.h"
 #include "ui_voice.h"
 #include "ui_clock.h"
+#include "ui_status_bar.h"
 #include "ui_refresh.h"
 #include "settings_api.h"
 #include "app_locale.h"
@@ -91,7 +93,7 @@ enum NetworkState {
 
 enum DisplayBootState {
   DISPLAY_BOOT_READY = 0,
-  DISPLAY_BOOT_CLEAR_WAIT,
+  DISPLAY_BOOT_SPLASH_WAIT,
 };
 
 static NetworkState networkState = NET_IDLE;
@@ -114,8 +116,6 @@ static bool isWifiConnected();
 static bool isZeroIp(const IPAddress &ip);
 static void configureStationDns(void);
 static void enterPortalMode();
-static void drawStatusBarRegion(UBYTE *image, int batteryPercent, bool wifiConnected,
-                                bool showWeather, WeatherIconKind weatherIcon, int weatherTempC);
 static void refreshMainUiOnDisplay(UiRefreshMode mode);
 static void requestDisplayRefresh(UiRefreshMode mode);
 static void serviceDisplayRefresh(bool force);
@@ -123,12 +123,6 @@ static void serviceDisplayRefresh(bool force);
 static void setEpaperPixel(UBYTE *image, UWORD lx, UWORD ly, bool black) {
   (void)image;
   epaper_set_pixel(lx, ly, black);
-}
-
-static void drawHorizontalLine(UBYTE *image, UWORD y) {
-  for (UWORD x = 0; x < EPD_1IN54_V2_WIDTH; x++) {
-    setEpaperPixel(image, x, y, true);
-  }
 }
 
 static void drawText(UBYTE *image, const char *text, UWORD x, UWORD y) {
@@ -1073,14 +1067,14 @@ static bool serviceDisplayBootState(void) {
     return true;
   }
 
-  if (displayBootState == DISPLAY_BOOT_CLEAR_WAIT) {
+  if (displayBootState == DISPLAY_BOOT_SPLASH_WAIT) {
     if (EPD_1IN54_V2_PollBusyWait()) {
       return false;
     }
     EPD_1IN54_V2_Enter_Partial();
     epaper_mark_partial_ready();
     displayBootState = DISPLAY_BOOT_READY;
-    Serial.println("[EPD] partial ready after async white clear");
+    Serial.println("[EPD] partial ready after async boot splash");
     return true;
   }
 
@@ -1091,10 +1085,11 @@ static void startNormalOperation() {
   portalModeActive = false;
   epaper_set_portal_mirror(false);
 
-  Serial.println("[EPD] full clear (~25s, async)...");
+  Serial.println("[EPD] boot splash (~25s, async)...");
   EPD_1IN54_V2_Init();
-  EPD_1IN54_V2_ClearAsync();
-  displayBootState = DISPLAY_BOOT_CLEAR_WAIT;
+  (void)boot_splash_draw_to_epaper();
+  epaper_display_base_image_async();
+  displayBootState = DISPLAY_BOOT_SPLASH_WAIT;
 
   lastDisplayedMinute = -1;
   lastWifiState = -1;
@@ -1115,6 +1110,7 @@ static void startNormalOperation() {
   btn_input_init();
   ui_lvgl_init();
   app_locale_init();
+  ui_status_bar_init();
   voice_service_init();
   ui_home_init();
   ui_weather_init();
@@ -1130,99 +1126,12 @@ static void startNormalOperation() {
   requestDisplayRefresh(UI_REFRESH_NAV);
 }
 
-static void drawWifiIcon(UBYTE *image, UWORD ox, UWORD oy, bool connected) {
-  for (int row = 0; row < 9; row++) {
-    for (int col = 0; col < 15; col++) {
-      setEpaperPixel(image, ox + col, oy + row, false);
-    }
-  }
-
-  static const uint16_t disconnected_icon[9] = {
-    0b010000000001000,
-    0b001000000010000,
-    0b000100000100000,
-    0b000010001000000,
-    0b000001010000000,
-    0b000000100000000,
-    0b000000000000000,
-    0b000000000000000,
-    0b000000100000000
-  };
-
-  static const uint16_t connected_icon[9] = {
-    0b000111111111000,
-    0b001100000011000,
-    0b000000000000000,
-    0b000001111100000,
-    0b000011000110000,
-    0b000000000000000,
-    0b000000111000000,
-    0b000000000000000,
-    0b000000010000000
-  };
-
-  const uint16_t *icon = connected ? connected_icon : disconnected_icon;
-  for (int row = 0; row < 9; row++) {
-    const uint16_t mask = icon[row];
-    for (int col = 0; col < 15; col++) {
-      if ((mask >> (14 - col)) & 0x01) {
-        setEpaperPixel(image, ox + col, oy + row, true);
-      }
-    }
-  }
-}
-
 static bool isWifiConnected() {
   return WiFi.status() == WL_CONNECTED;
 }
 
 static bool isZeroIp(const IPAddress &ip) {
   return ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0;
-}
-
-static void drawWeatherIcon(UBYTE *image, UWORD ox, UWORD oy, WeatherIconKind kind) {
-  if ((unsigned)kind >= WEATHER_ICON_COUNT) {
-    kind = WEATHER_ICON_CLOUDY;
-  }
-
-  for (int row = 0; row < WEATHER_ICON_SIZE; row++) {
-    for (int col = 0; col < WEATHER_ICON_SIZE; col++) {
-      setEpaperPixel(image, ox + col, oy + row, false);
-    }
-  }
-
-  for (int row = 0; row < WEATHER_ICON_SIZE; row++) {
-    const uint16_t mask = weather_icon_bitmaps[kind][row];
-    for (int col = 0; col < WEATHER_ICON_SIZE; col++) {
-      if ((mask >> (WEATHER_ICON_SIZE - 1 - col)) & 0x01) {
-        setEpaperPixel(image, ox + col, oy + row, true);
-      }
-    }
-  }
-}
-
-// 简易电池图标：外框 + 电量填充
-static void drawBatteryIcon(UBYTE *image, UWORD x, UWORD y, int percent) {
-  if (percent < 0) percent = 0;
-  if (percent > 100) percent = 100;
-
-  for (UWORD dy = 0; dy < 8; dy++) {
-    for (UWORD dx = 0; dx < 14; dx++) {
-      bool edge = (dy == 0 || dy == 7 || dx == 0 || dx == 13);
-      setEpaperPixel(image, x + dx, y + dy, edge);
-    }
-  }
-  for (UWORD dy = 2; dy < 6; dy++) {
-    setEpaperPixel(image, x + 14, y + dy, true);
-  }
-
-  UWORD fillWidth = (UWORD)((percent * 10) / 100);
-  if (fillWidth < 1 && percent > 0) fillWidth = 1;
-  for (UWORD dy = 2; dy <= 5; dy++) {
-    for (UWORD dx = 2; dx < 2 + fillWidth; dx++) {
-      setEpaperPixel(image, x + dx, y + dy, true);
-    }
-  }
 }
 
 static int readBatteryPercent() {
@@ -1250,77 +1159,6 @@ static const char* weekdayShort(int wday) {
   static const char* names[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
   if (wday < 0 || wday > 6) return "---";
   return names[wday];
-}
-
-static UWORD statusBarTextWidth(const char *text) {
-  return (UWORD)strlen(text) * 8;
-}
-
-static void buildStatusDateTimeLine(const struct tm *timeinfo, char *out, size_t outLen) {
-  snprintf(out, outLen, "%s %d/%d %02d:%02d",
-           weekdayShort(timeinfo->tm_wday),
-           timeinfo->tm_mon + 1,
-           timeinfo->tm_mday,
-           timeinfo->tm_hour,
-           timeinfo->tm_min);
-}
-
-static bool statusBarWeatherFits(UWORD dateTimeWidth, UWORD tempWidth, UWORD rightBoundX,
-                                 UWORD *weatherIconX, UWORD *weatherTempX) {
-  const UWORD gap = 2;
-  *weatherIconX = 18 + dateTimeWidth + gap;
-  *weatherTempX = *weatherIconX + 16 + gap;
-  return (*weatherTempX + tempWidth + gap) <= rightBoundX;
-}
-
-static void drawStatusBarRegion(UBYTE *image, int batteryPercent, bool wifiConnected,
-                                bool showWeather, WeatherIconKind weatherIcon, int weatherTempC) {
-  (void)image;
-  const UWORD barY = 2;
-  const UWORD barLineY = 19;
-  const UWORD dateX = 18;
-  UWORD weatherIconX = 118;
-  const UWORD weatherIconY = barY - 1;
-  UWORD weatherTempX = 134;
-  const UWORD battIconX = EPD_1IN54_V2_WIDTH - 15;
-
-  drawWifiIcon(image, 2, barY + 4, wifiConnected);
-
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo, 0)) {
-    drawText(image, "NO TIME", dateX, barY);
-    drawHorizontalLine(image, barLineY);
-    return;
-  }
-
-  char dateTimeLine[32];
-  char tempLine[8] = {};
-
-  if (showWeather) {
-    if (weatherTempC >= -9 && weatherTempC <= 99) {
-      snprintf(tempLine, sizeof(tempLine), "%2dC", weatherTempC);
-    } else {
-      snprintf(tempLine, sizeof(tempLine), "--C");
-    }
-  }
-
-  buildStatusDateTimeLine(&timeinfo, dateTimeLine, sizeof(dateTimeLine));
-  if (showWeather) {
-    (void)statusBarWeatherFits(statusBarTextWidth(dateTimeLine), statusBarTextWidth(tempLine),
-                               battIconX, &weatherIconX, &weatherTempX);
-  }
-
-  drawText(image, dateTimeLine, dateX, barY);
-
-  if (showWeather) {
-    drawWeatherIcon(image, weatherIconX, weatherIconY, weatherIcon);
-    drawText(image, tempLine, weatherTempX, barY);
-  }
-
-  const int battLevel = (batteryPercent < 0) ? 100 : batteryPercent;
-  drawBatteryIcon(image, battIconX, barY + 2, battLevel);
-
-  drawHorizontalLine(image, barLineY);
 }
 
 static void refreshMainUiOnDisplay(UiRefreshMode mode) {
@@ -1351,23 +1189,20 @@ static void refreshMainUiOnDisplay(UiRefreshMode mode) {
     }
   }
 
+  const int batteryPercent = readBatteryPercent();
+  const bool wifiConnected = isWifiConnected();
+  const int wifiState = wifiConnected ? 1 : 0;
+  WeatherSnapshot weather = {};
+  weather_service_get_snapshot(&weather);
+  ui_status_bar_update(batteryPercent, wifiConnected,
+                       weather.valid, weather.icon, weather.tempC);
+
   ui_lvgl_prepare();
   if (fullLvgl) {
     epaper_clear_white();
     ui_lvgl_refresh();
   } else {
     ui_lvgl_refresh_partial();
-  }
-
-  const int batteryPercent = readBatteryPercent();
-  const bool wifiConnected = isWifiConnected();
-  const int wifiState = wifiConnected ? 1 : 0;
-
-  if (fullLvgl) {
-    WeatherSnapshot weather = {};
-    weather_service_get_snapshot(&weather);
-    drawStatusBarRegion(epaper_get_buffer(), batteryPercent, wifiConnected,
-                        weather.valid, weather.icon, weather.tempC);
   }
 
   if (!epaper_upload_mode_async(fullInit, fastEpd)) {
@@ -1385,8 +1220,6 @@ static void refreshMainUiOnDisplay(UiRefreshMode mode) {
   if (getLocalTime(&timeinfo, 0)) {
     lastDisplayedMinute = timeinfo.tm_hour * 60 + timeinfo.tm_min;
     lastWifiState = wifiState;
-    WeatherSnapshot weather = {};
-    weather_service_get_snapshot(&weather);
     if (weather.valid) {
       lastWeatherIcon = (int)weather.icon;
       lastWeatherTemp = weather.tempC;
@@ -1619,7 +1452,10 @@ void loop() {
   const bool visionIdle = !ui_vision_is_busy();
   const bool answersIdle = !answersBusy;
   const bool voiceIdle = !voiceBusy;
-  serviceNetworkStateMachine(displayBootState == DISPLAY_BOOT_READY &&
+  const bool displayAllowsBackgroundWork =
+      displayBootState == DISPLAY_BOOT_READY ||
+      displayBootState == DISPLAY_BOOT_SPLASH_WAIT;
+  serviceNetworkStateMachine(displayAllowsBackgroundWork &&
                              !displayRefreshPending &&
                              !epaper_upload_active() &&
                              inputIdle &&

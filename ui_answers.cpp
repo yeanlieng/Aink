@@ -4,6 +4,7 @@
 #include "bookofanswers.h"
 #include "camera_service.h"
 #include "ui_fonts.h"
+#include "ui_lvgl.h"
 #include "voice_service.h"
 
 #include <Arduino.h>
@@ -567,7 +568,7 @@ static bool startLocalAsk(AnswersMode mode) {
 
 void ui_answers_init(void) {
   s_screenAnswers = lv_obj_create(nullptr);
-  lv_obj_set_size(s_screenAnswers, 200, 180);
+  ui_lvgl_configure_screen(s_screenAnswers);
   lv_obj_set_style_bg_color(s_screenAnswers, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_screenAnswers, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_screenAnswers, LV_OBJ_FLAG_SCROLLABLE);

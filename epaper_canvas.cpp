@@ -92,6 +92,12 @@ static void mirrorLogicalXInPlace(void) {
   }
 }
 
+void epaper_display_base_image_async(void) {
+  mirrorLogicalXInPlace();
+  EPD_1IN54_V2_DisplayPartBaseImageAsync(s_blackImage);
+  mirrorLogicalXInPlace();
+}
+
 void epaper_upload(bool fullRefresh) {
   epaper_upload_mode(fullRefresh, false);
 }
@@ -113,7 +119,7 @@ bool epaper_upload_mode_async(bool fullInit, bool fastPartial) {
   if (fullInit || !s_epaperPartialReady) {
     Serial.println("[EPD] upload full init...");
     EPD_1IN54_V2_Init();
-    EPD_1IN54_V2_DisplayPartBaseImageAsync(s_blackImage);
+    epaper_display_base_image_async();
     s_uploadState = EPAPER_UPLOAD_FULL_WAIT;
     return true;
   }

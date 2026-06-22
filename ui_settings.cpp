@@ -5,6 +5,7 @@
 #include "settings_api.h"
 #include "ui_clock.h"
 #include "ui_fonts.h"
+#include "ui_lvgl.h"
 #include "weather_service.h"
 #include "stock_service.h"
 
@@ -351,7 +352,7 @@ static void reset_to_root(void) {
 
 void ui_settings_init(void) {
   s_screenSettings = lv_obj_create(nullptr);
-  lv_obj_set_size(s_screenSettings, 200, 180);
+  ui_lvgl_configure_screen(s_screenSettings);
   lv_obj_set_style_bg_color(s_screenSettings, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_screenSettings, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_screenSettings, LV_OBJ_FLAG_SCROLLABLE);

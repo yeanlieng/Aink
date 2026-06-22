@@ -3,6 +3,7 @@
 #include "app_locale.h"
 #include "stock_service.h"
 #include "ui_fonts.h"
+#include "ui_lvgl.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -269,7 +270,7 @@ static void bind_stock_data(void) {
 
 void ui_stock_init(void) {
   s_screenStock = lv_obj_create(nullptr);
-  lv_obj_set_size(s_screenStock, 200, 180);
+  ui_lvgl_configure_screen(s_screenStock);
   lv_obj_set_style_bg_color(s_screenStock, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_screenStock, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_screenStock, LV_OBJ_FLAG_SCROLLABLE);

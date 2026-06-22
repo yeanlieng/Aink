@@ -3,6 +3,7 @@
 #include "app_locale.h"
 #include "camera_service.h"
 #include "ui_fonts.h"
+#include "ui_lvgl.h"
 #include "vision_service.h"
 
 #include <Arduino.h>
@@ -388,7 +389,7 @@ static void show_idle(void) {
 
 void ui_vision_init(void) {
   s_screenVision = lv_obj_create(nullptr);
-  lv_obj_set_size(s_screenVision, 200, 180);
+  ui_lvgl_configure_screen(s_screenVision);
   lv_obj_set_style_bg_color(s_screenVision, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_screenVision, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_screenVision, LV_OBJ_FLAG_SCROLLABLE);
